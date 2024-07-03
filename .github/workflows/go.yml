@@ -20,9 +20,7 @@ jobs:
 
     - name: Set up Go
       uses: actions/setup-go@v5
-      with:
-        go-version-file: 'path/to/go.mod'
-          
+
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v6
       with:
