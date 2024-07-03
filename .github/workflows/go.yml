@@ -13,6 +13,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      bazel-remote:
+        image: buchgr/bazel-remote-cache:v1.3.4
+        ports:
+          - 9092:9092
 
     steps:
     - name: Checkout code
@@ -20,6 +25,8 @@ jobs:
 
     - name: Set up Go
       uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v6
@@ -28,3 +35,6 @@ jobs:
         
     - name: Run tests
       run: go test ./...
+
+    - name: Run integration tests
+      run: go test ./client -remote-cache-host localhost:9092

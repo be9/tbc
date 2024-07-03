@@ -53,10 +53,6 @@ func (c *client) CheckCapabilities(ctx context.Context) error {
 		return errors.New("SHA256 is not supported by remote cache")
 	}
 
-	if !slices.Contains(cc.GetSupportedCompressors(), remoteexecution.Compressor_ZSTD) {
-		return errors.New("ZSTD is not supported by remote cache")
-	}
-
 	if !cc.GetActionCacheUpdateCapabilities().GetUpdateEnabled() {
 		return errors.New("AC update is not supported by remote cache")
 	}
