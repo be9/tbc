@@ -11,8 +11,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build_and_test:
     runs-on: ubuntu-latest
+    services:
+      bazel-remote:
+        image: buchgr/bazel-remote-cache:v1.3.4
+        ports:
+          - 9092:9092
 
     steps:
     - name: Checkout code
@@ -27,4 +32,4 @@ jobs:
         version: v1.59.1
         
     - name: Run tests
-      run: go test ./...
+      run: go test -v ./... -remote-cache-host localhost:9092
