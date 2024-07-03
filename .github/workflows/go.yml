@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build_and_test:
+  build:
     runs-on: ubuntu-latest
     services:
       bazel-remote:
@@ -32,4 +32,7 @@ jobs:
         version: v1.59.1
         
     - name: Run tests
-      run: go test -v ./... -remote-cache-host localhost:9092
+      run: go test ./...
+
+    - name: Run integration tests
+      run: go test ./client -remote-cache-host localhost:9092
