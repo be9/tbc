@@ -156,10 +156,7 @@ func TestCheck(t *testing.T) {
 
 func TestDownload(t *testing.T) {
 	cl := client.NewInMemoryClient()
-
-	randomContent := make([]byte, 4096)
-	_, err := rand.Read(randomContent)
-	assert.NilError(t, err)
+	randomContent := randomBytes(t, 4096)
 
 	uploadFile(t, cl, "key", randomContent, client.Metadata{
 		"x-artifact-duration": "42",
@@ -175,7 +172,7 @@ func TestDownload(t *testing.T) {
 		r.ServeHTTP(rr, req)
 
 		assert.Equal(t, rr.Code, http.StatusOK)
-		assert.DeepEqual(t, rr.Body.Bytes(), randomContent)
+		assert.Equal(t, bytes.Equal(rr.Body.Bytes(), randomContent), true)
 		assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "42")
 		assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), "hmac tag")
 	})
@@ -186,7 +183,7 @@ func TestDownload(t *testing.T) {
 		r.ServeHTTP(rr, req)
 
 		assert.Equal(t, rr.Code, http.StatusOK)
-		assert.DeepEqual(t, rr.Body.Bytes(), randomContent)
+		assert.Equal(t, bytes.Equal(rr.Body.Bytes(), randomContent), true)
 		assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "")
 		assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), "")
 	})
@@ -200,6 +197,41 @@ func TestDownload(t *testing.T) {
 			assert.Equal(t, rr.Code, http.StatusNotFound)
 		}
 	})
+}
+
+func TestBidirectional(t *testing.T) {
+	var (
+		cl      = client.NewInMemoryClient()
+		r       = createHandlerForClient(t, "", cl)
+		content = randomBytes(t, 64*1024*1024) // 64 MiB
+	)
+	const (
+		tag = "Tc0BmHvJYMIYJ62/zx87YqO0Flxk+5Ovip25NY825CQ="
+		key = "12HKQaOmR5t5Uy6vdcQsNIiZgHGB"
+	)
+
+	// first upload
+	func() {
+		req := createBaseUploadRequest(t, key, bytes.NewBuffer(content))
+		req.Header.Set("X-Artifact-Duration", "42")
+		req.Header.Set("X-Artifact-Client-Ci", "TEST")
+		req.Header.Set("X-Artifact-Client-Interactive", "1")
+		req.Header.Set("X-Artifact-Tag", tag)
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		assert.Equal(t, rr.Code, http.StatusAccepted)
+	}()
+
+	// ...then download
+	req := createDownloadRequest(t, key)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	assert.Equal(t, rr.Code, http.StatusOK)
+	assert.Equal(t, bytes.Equal(rr.Body.Bytes(), content), true)
+	assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "42")
+	assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), tag)
 }
 
 func createHandler(t *testing.T, token string) http.Handler {
@@ -235,7 +267,13 @@ func uploadFile(t *testing.T, cl client.Interface, key string, data []byte, md c
 	err := os.WriteFile(filePath, data, 0644)
 	assert.NilError(t, err)
 
-	// Upload the file
 	err = cl.UploadFile(context.Background(), key, filePath, md)
 	assert.NilError(t, err)
+}
+
+func randomBytes(t *testing.T, n int) []byte {
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	assert.NilError(t, err)
+	return b
 }
