@@ -1,0 +1,14 @@
+linters:
+  enable:
+    - bodyclose
+    - canonicalheader
+    - contextcheck
+    - decorder
+    - exhaustive
+    - gci
+    - goconst
+
+# https://github.com/golangci/golangci-lint/issues/4743
+linters-settings:
+  errcheck:
+    ignore: ''

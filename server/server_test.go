@@ -1,0 +1,241 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/be9/tbc/client"
+	"gotest.tools/v3/assert"
+)
+
+func TestBadToken(t *testing.T) {
+	r, err := CreateHandler(client.NewInMemoryClient(), ServerOptions{Token: "t0k3n"})
+	assert.NilError(t, err)
+
+	req, err := http.NewRequest("POST", "/v8/artifacts/events", nil)
+	assert.NilError(t, err)
+	rr := httptest.NewRecorder()
+
+	r.ServeHTTP(rr, req)
+
+	assert.Equal(t, rr.Code, http.StatusForbidden)
+}
+
+func TestEvents(t *testing.T) {
+	r := createHandler(t, "")
+
+	req, err := http.NewRequest("POST", "/v8/artifacts/events", nil)
+	assert.NilError(t, err)
+
+	//req.Header.Set("Authorization", "Bearer t0k3n")
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	assert.Equal(t, rr.Code, http.StatusOK)
+}
+
+func TestStatus(t *testing.T) {
+	r := createHandler(t, "")
+
+	req, err := http.NewRequest("GET", "/v8/artifacts/status", nil)
+	assert.NilError(t, err)
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	assert.Equal(t, rr.Code, http.StatusOK)
+	assert.Equal(t, rr.Body.String(), "{\"status\":\"enabled\"}\n")
+}
+
+func TestUpload(t *testing.T) {
+	const (
+		input  = "valuable content to be cached"
+		input2 = "other valuable content"
+	)
+
+	cl := client.NewInMemoryClient()
+	r := createHandlerForClient(t, "", cl)
+
+	t.Run("basic upload", func(t *testing.T) {
+		req := createBaseUploadRequest(t, "key1", bytes.NewBuffer([]byte(input)))
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		assert.Equal(t, rr.Code, http.StatusAccepted)
+
+		cacheData := new(bytes.Buffer)
+		md, err := cl.DownloadFile(context.Background(), "key1", cacheData)
+		assert.NilError(t, err)
+		assert.Equal(t, len(md), 0)
+
+		assert.DeepEqual(t, cacheData.String(), input)
+	})
+
+	t.Run("upload with metadata", func(t *testing.T) {
+		const tag = "Tc0BmHvJYMIYJ62/zx87YqO0Flxk+5Ovip25NY825CQ="
+		req := createBaseUploadRequest(t, "key2", bytes.NewBuffer([]byte(input)))
+		req.Header.Set("X-Artifact-Duration", "42")
+		req.Header.Set("X-Artifact-Client-Ci", "TEST")
+		req.Header.Set("X-Artifact-Client-Interactive", "1")
+		req.Header.Set("X-Artifact-Tag", tag)
+
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		assert.Equal(t, rr.Code, http.StatusAccepted)
+
+		cacheData := new(bytes.Buffer)
+		md, err := cl.DownloadFile(context.Background(), "key2", cacheData)
+		assert.NilError(t, err)
+		assert.DeepEqual(t, md, client.Metadata{
+			"x-artifact-duration": "42",
+			"x-artifact-tag":      tag,
+			// other headers should not be recorded
+		})
+		assert.DeepEqual(t, cacheData.String(), input)
+	})
+
+	t.Run("teamId and slug scoping", func(t *testing.T) {
+		const sharedKey = "key3"
+
+		req1 := createBaseUploadRequest(t, sharedKey+"?teamId=tid1&slug=slug1", bytes.NewBuffer([]byte(input)))
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req1)
+
+		ok, err := cl.FindFile(context.Background(), "slug1/tid1/"+sharedKey)
+		assert.NilError(t, err)
+		assert.Equal(t, ok, true)
+
+		req2 := createBaseUploadRequest(t, sharedKey+"?teamId=tid2&slug=slug2", bytes.NewBuffer([]byte(input2)))
+		rr2 := httptest.NewRecorder()
+		r.ServeHTTP(rr2, req2)
+
+		cacheData := new(bytes.Buffer)
+		_, err = cl.DownloadFile(context.Background(), "slug2/tid2/"+sharedKey, cacheData)
+		assert.NilError(t, err)
+
+		assert.DeepEqual(t, cacheData.String(), input2)
+	})
+}
+
+func TestCheck(t *testing.T) {
+	cl := client.NewInMemoryClient()
+	uploadFile(t, cl, "key", []byte("DATA"), nil)
+	uploadFile(t, cl, "slug/teamid/key", []byte("DATA"), nil)
+
+	r := createHandlerForClient(t, "", cl)
+
+	t.Run("key exists", func(t *testing.T) {
+		for _, k := range []string{"key", "key?teamId=teamid&slug=slug"} {
+			req := createCheckRequest(t, k)
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+
+			assert.Equal(t, rr.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("key does not exist", func(t *testing.T) {
+		for _, k := range []string{"unknown key", "key?teamId=badteamid&slug=slug"} {
+			req := createCheckRequest(t, k)
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+
+			assert.Equal(t, rr.Code, http.StatusNotFound)
+		}
+	})
+}
+
+func TestDownload(t *testing.T) {
+	cl := client.NewInMemoryClient()
+
+	randomContent := make([]byte, 4096)
+	_, err := rand.Read(randomContent)
+	assert.NilError(t, err)
+
+	uploadFile(t, cl, "key", randomContent, client.Metadata{
+		"x-artifact-duration": "42",
+		"x-artifact-tag":      "hmac tag",
+	})
+	uploadFile(t, cl, "slug/teamid/key", randomContent, nil)
+
+	r := createHandlerForClient(t, "", cl)
+
+	t.Run("successful download", func(t *testing.T) {
+		req := createDownloadRequest(t, "key")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		assert.Equal(t, rr.Code, http.StatusOK)
+		assert.DeepEqual(t, rr.Body.Bytes(), randomContent)
+		assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "42")
+		assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), "hmac tag")
+	})
+
+	t.Run("scoped download", func(t *testing.T) {
+		req := createDownloadRequest(t, "key?teamId=teamid&slug=slug")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		assert.Equal(t, rr.Code, http.StatusOK)
+		assert.DeepEqual(t, rr.Body.Bytes(), randomContent)
+		assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "")
+		assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), "")
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		for _, k := range []string{"unknown key", "key?teamId=badteamid&slug=slug"} {
+			req := createDownloadRequest(t, k)
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+
+			assert.Equal(t, rr.Code, http.StatusNotFound)
+		}
+	})
+}
+
+func createHandler(t *testing.T, token string) http.Handler {
+	return createHandlerForClient(t, token, client.NewInMemoryClient())
+}
+
+func createHandlerForClient(t *testing.T, token string, cl client.Interface) http.Handler {
+	r, err := CreateHandler(cl, ServerOptions{Token: token})
+	assert.NilError(t, err)
+	return r
+}
+
+func createBaseUploadRequest(t *testing.T, key string, body io.Reader) *http.Request {
+	req, err := http.NewRequest("PUT", "/v8/artifacts/"+key, body)
+	assert.NilError(t, err)
+	return req
+}
+
+func createCheckRequest(t *testing.T, key string) *http.Request {
+	req, err := http.NewRequest("HEAD", "/v8/artifacts/"+key, nil)
+	assert.NilError(t, err)
+	return req
+}
+
+func createDownloadRequest(t *testing.T, key string) *http.Request {
+	req, err := http.NewRequest("GET", "/v8/artifacts/"+key, nil)
+	assert.NilError(t, err)
+	return req
+}
+
+func uploadFile(t *testing.T, cl client.Interface, key string, data []byte, md client.Metadata) {
+	filePath := filepath.Join(t.TempDir(), "upload.dat")
+	err := os.WriteFile(filePath, data, 0644)
+	assert.NilError(t, err)
+
+	// Upload the file
+	err = cl.UploadFile(context.Background(), key, filePath, md)
+	assert.NilError(t, err)
+}
