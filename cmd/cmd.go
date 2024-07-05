@@ -55,13 +55,19 @@ func CreateApp() *cli.App {
 		Description: `Spin up a Turborepo-compatible remote cache server that forwards requests to a Bazel-compatible remote cache server 
 and execute the provided command.
 
-Example:
+Examples:
 
 # Check the server with curl (by default, the server binds to 0.0.0.0:8080)
 tbc --host bazel-cache-host:port curl http://localhost:8080/v8/artifacts/status
 
-# TBD
-
+# Run 'turbo build'
+env TURBO_REMOTE_CACHE_SIGNATURE_KEY=super_secret \
+    TURBO_API=http://localhost:8080 \
+    TURBO_TOKEN=any \		# this is not actually used, but required to be set by turbo
+    TURBO_TEAM=any \
+    tbc --host bazel-cache-host:port \
+    --summary \
+    pnpm turbo build
 `,
 	}
 	return app
