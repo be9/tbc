@@ -16,7 +16,7 @@ import (
 )
 
 func TestBadToken(t *testing.T) {
-	r, err := CreateHandler(client.NewInMemoryClient(), ServerOptions{Token: "t0k3n"})
+	r, err := CreateHandler(client.NewInMemoryClient(), Options{Token: "t0k3n"})
 	assert.NilError(t, err)
 
 	req, err := http.NewRequest("POST", "/v8/artifacts/events", nil)
@@ -239,7 +239,7 @@ func createHandler(t *testing.T, token string) http.Handler {
 }
 
 func createHandlerForClient(t *testing.T, token string, cl client.Interface) http.Handler {
-	r, err := CreateHandler(cl, ServerOptions{Token: token})
+	r, err := CreateHandler(cl, Options{Token: token})
 	assert.NilError(t, err)
 	return r
 }

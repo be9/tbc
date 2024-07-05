@@ -16,19 +16,19 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type ServerOptions struct {
+type Options struct {
 	Token string
 }
 
 type server struct {
-	opts   ServerOptions
+	opts   Options
 	cl     client.Interface
 	logger *slog.Logger
 }
 
 func CreateHandler(
 	client client.Interface,
-	opts ServerOptions,
+	opts Options,
 ) (http.Handler, error) {
 	r := mux.NewRouter()
 	api := r.PathPrefix("/v8/artifacts").Subrouter()
@@ -57,12 +57,9 @@ func CreateHandler(
 
 	api.HandleFunc("/events", srv.eventsHandler).Methods("POST")
 	api.HandleFunc("/status", srv.statusHandler).Methods("GET")
-	api.HandleFunc("/{hash}", srv.fileUploadHandler).Methods("PUT")
-	api.HandleFunc("/{hash}", srv.fileCheckHandler).Methods("HEAD")
-	api.HandleFunc("/{hash}", srv.fileDownloadHandler).Methods("GET")
-
-	// TODO
-	//api.HandleFunc("/", srv.multiQueryHandler).Methods("POST")
+	api.HandleFunc("/{hash}", srv.uploadArtifactHandler).Methods("PUT")
+	api.HandleFunc("/{hash}", srv.artifactExistsHandler).Methods("HEAD")
+	api.HandleFunc("/{hash}", srv.downloadArtifactHandler).Methods("GET")
 
 	return r, nil
 }
@@ -81,7 +78,7 @@ func (*server) statusHandler(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *server) fileUploadHandler(w http.ResponseWriter, r *http.Request) {
+func (s *server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 	key := getKey(w, r)
 	if key == "" {
 		return
@@ -126,7 +123,7 @@ func (s *server) fileUploadHandler(w http.ResponseWriter, r *http.Request) {
 	}{})
 }
 
-func (s *server) fileCheckHandler(w http.ResponseWriter, r *http.Request) {
+func (s *server) artifactExistsHandler(w http.ResponseWriter, r *http.Request) {
 	key := getKey(w, r)
 	if key == "" {
 		return
@@ -146,7 +143,7 @@ func (s *server) fileCheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) fileDownloadHandler(w http.ResponseWriter, r *http.Request) {
+func (s *server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 	key := getKey(w, r)
 	if key == "" {
 		return
