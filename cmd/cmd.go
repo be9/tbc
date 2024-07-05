@@ -49,7 +49,20 @@ func CreateApp() *cli.App {
 			}
 			return nil
 		},
-		Action: runProxy,
+		Action:          runProxy,
+		HideHelpCommand: true,
+		ArgsUsage:       "command <command arguments>",
+		Description: `Spin up a Turborepo-compatible remote cache server that forwards requests to a Bazel-compatible remote cache server 
+and execute the provided command.
+
+Example:
+
+# Check the server with curl (by default, the server binds to 0.0.0.0:8080)
+tbc --host bazel-cache-host:port curl http://localhost:8080/v8/artifacts/status
+
+# TBD
+
+`,
 	}
 	return app
 }
