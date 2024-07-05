@@ -116,7 +116,7 @@ func (s *Server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.cl.UploadFile(s.context(r), key, uploadedFile.Name(), collectMetadata(r.Header))
+	err = s.cl.UploadFile(makeContext(r.Context(), r), key, uploadedFile.Name(), collectMetadata(r.Header))
 	if err != nil {
 		reportError("error uploading file", err)
 		return
@@ -135,7 +135,7 @@ func (s *Server) artifactExistsHandler(w http.ResponseWriter, r *http.Request) {
 	if key == "" {
 		return
 	}
-	ok, err := s.cl.FindFile(s.context(r), key)
+	ok, err := s.cl.FindFile(makeContext(r.Context(), r), key)
 
 	if err != nil {
 		http.Error(w, "Error looking up file", http.StatusInternalServerError)
@@ -174,7 +174,7 @@ func (s *Server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request)
 		_ = os.Remove(downloadedFile.Name())
 	}()
 
-	md, err := s.cl.DownloadFile(s.context(r), key, downloadedFile)
+	md, err := s.cl.DownloadFile(makeContext(r.Context(), r), key, downloadedFile)
 	if err != nil {
 		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 			http.Error(w, "key not found", http.StatusNotFound)
@@ -198,14 +198,14 @@ func (s *Server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request)
 	http.ServeContent(w, r, "", time.UnixMilli(0), downloadedFile)
 }
 
-func (s *Server) context(r *http.Request) context.Context {
-	ctx := fctx.WithMeta(r.Context(),
+func makeContext(ctx context.Context, r *http.Request) context.Context {
+	return fctx.WithMeta(ctx,
 		"method", r.Method,
 		"url", r.URL.String(),
 	)
-	return ctx
 }
 
+// nolint: contextcheck
 func (s *Server) logError(err error) {
 	s.stats.ErrorsCount++
 
