@@ -16,36 +16,48 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Options for creating a server.
 type Options struct {
 	Token string
 }
 
-type server struct {
+// Stats holds statistics for server operation. Can be requested with Server.GetStatistics().
+type Stats struct {
+	ErrorsCount           int `json:"errors,omitempty"`
+	UploadCount           int `json:"uploads,omitempty"`
+	ExistsYesCount        int `json:"exists_yes,omitempty"`
+	ExistsNoCount         int `json:"exists_no,omitempty"`
+	DownloadCount         int `json:"downloads,omitempty"`
+	DownloadNotFoundCount int `json:"download_not_found,omitempty"`
+}
+
+type Server struct {
 	opts   Options
 	cl     client.Interface
 	logger *slog.Logger
+
+	stats Stats
 }
 
-func CreateHandler(
-	client client.Interface,
-	opts Options,
-) (http.Handler, error) {
-	r := mux.NewRouter()
-	api := r.PathPrefix("/v8/artifacts").Subrouter()
-
-	srv := &server{
+func NewServer(client client.Interface, opts Options) *Server {
+	return &Server{
 		opts:   opts,
 		cl:     client,
 		logger: slog.With(),
 	}
+}
 
-	if opts.Token != "" {
+func (s *Server) CreateHandler() (http.Handler, error) {
+	r := mux.NewRouter()
+	api := r.PathPrefix("/v8/artifacts").Subrouter()
+
+	if s.opts.Token != "" {
 		api.Use(func(next http.Handler) http.Handler {
-			expectedHeader := fmt.Sprintf("Bearer %s", opts.Token)
+			expectedHeader := fmt.Sprintf("Bearer %s", s.opts.Token)
 
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != expectedHeader {
-					srv.logger.Error("[tbc] authorization error")
+					s.logger.Error("[tbc] authorization error")
 
 					http.Error(w, "Forbidden", http.StatusForbidden)
 					return
@@ -55,20 +67,20 @@ func CreateHandler(
 		})
 	}
 
-	api.HandleFunc("/events", srv.eventsHandler).Methods("POST")
-	api.HandleFunc("/status", srv.statusHandler).Methods("GET")
-	api.HandleFunc("/{hash}", srv.uploadArtifactHandler).Methods("PUT")
-	api.HandleFunc("/{hash}", srv.artifactExistsHandler).Methods("HEAD")
-	api.HandleFunc("/{hash}", srv.downloadArtifactHandler).Methods("GET")
+	api.HandleFunc("/events", s.eventsHandler).Methods("POST")
+	api.HandleFunc("/status", s.statusHandler).Methods("GET")
+	api.HandleFunc("/{hash}", s.uploadArtifactHandler).Methods("PUT")
+	api.HandleFunc("/{hash}", s.artifactExistsHandler).Methods("HEAD")
+	api.HandleFunc("/{hash}", s.downloadArtifactHandler).Methods("GET")
 
 	return r, nil
 }
 
-func (*server) eventsHandler(w http.ResponseWriter, _ *http.Request) {
+func (*Server) eventsHandler(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (*server) statusHandler(w http.ResponseWriter, _ *http.Request) {
+func (*Server) statusHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	jsonBody(w, struct {
@@ -78,16 +90,21 @@ func (*server) statusHandler(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 	key := getKey(w, r)
 	if key == "" {
 		return
 	}
 
+	reportError := func(msg string, err error) {
+		http.Error(w, "unable to upload", http.StatusInternalServerError)
+		s.logger.Error("[tbc] "+msg, slog.String("err", err.Error()))
+		s.stats.ErrorsCount++
+	}
+
 	uploadedFile, err := os.CreateTemp("", "tbc-upload-*.tmp")
 	if err != nil {
-		http.Error(w, "unable to upload", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error creating a temp file", slog.String("err", err.Error()))
+		reportError("error creating a temp file", err)
 		return
 	}
 
@@ -98,32 +115,30 @@ func (s *server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 
 	_, err = io.Copy(uploadedFile, r.Body)
 	if err != nil {
-		http.Error(w, "Error saving file", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error saving uploaded file", slog.String("err", err.Error()))
+		reportError("error saving uploaded file", err)
 		return
 	}
 
 	err = uploadedFile.Close()
 	if err != nil {
-		http.Error(w, "Error saving file", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error closing uploaded file", slog.String("err", err.Error()))
+		reportError("error closing uploaded file", err)
 		return
 	}
 
 	err = s.cl.UploadFile(r.Context(), key, uploadedFile.Name(), collectMetadata(r.Header))
 	if err != nil {
-		http.Error(w, "Error uploading file", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error uploading file", slog.String("err", err.Error()))
+		reportError("error uploading file", err)
 		return
 	}
 
+	s.stats.UploadCount++
 	w.WriteHeader(http.StatusAccepted)
 	jsonBody(w, struct {
 		Urls []string `json:"urls"`
 	}{})
 }
 
-func (s *server) artifactExistsHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) artifactExistsHandler(w http.ResponseWriter, r *http.Request) {
 	key := getKey(w, r)
 	if key == "" {
 		return
@@ -133,17 +148,20 @@ func (s *server) artifactExistsHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Error looking up file", http.StatusInternalServerError)
 		s.logger.Error("[tbc] error looking up file", slog.String("err", err.Error()))
+		s.stats.ErrorsCount++
 		return
 	}
 
 	if ok {
+		s.stats.ExistsYesCount++
 		w.WriteHeader(http.StatusOK)
 	} else {
+		s.stats.ExistsNoCount++
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
 
-func (s *server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 	key := getKey(w, r)
 	if key == "" {
 		return
@@ -152,6 +170,7 @@ func (s *server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request)
 	reportError := func(msg string, err error) {
 		http.Error(w, "unable to download", http.StatusInternalServerError)
 		s.logger.Error("[tbc] "+msg, slog.String("err", err.Error()))
+		s.stats.ErrorsCount++
 	}
 
 	downloadedFile, err := os.CreateTemp("", "tbc-download-*.tmp")
@@ -169,6 +188,7 @@ func (s *server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 			http.Error(w, "key not found", http.StatusNotFound)
+			s.stats.DownloadNotFoundCount++
 			return
 		}
 
@@ -183,7 +203,16 @@ func (s *server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	s.stats.DownloadCount++
 	http.ServeContent(w, r, "", time.UnixMilli(0), downloadedFile)
+}
+
+func (s *Server) GetStatistics() Stats {
+	return s.stats
+}
+
+func (s *Server) ResetStatistics() {
+	s.stats = Stats{}
 }
 
 func jsonBody(w http.ResponseWriter, v any) {
