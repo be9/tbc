@@ -9,6 +9,12 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const (
+	// Workaround for https://github.com/grpc/grpc-go/issues/5358
+	// which manifests itself with `rpc error: code = Internal desc = unexpected EOF`
+	windowSize = 8 * 1024 * 1024
+)
+
 // DialGrpc creates a new gRPC client connected to host. tlsKey and tlsCert must be either both empty or non-empty.
 func DialGrpc(host, tlsCert, tlsKey string) (*grpc.ClientConn, error) {
 	var creds credentials.TransportCredentials
@@ -27,5 +33,11 @@ func DialGrpc(host, tlsCert, tlsKey string) (*grpc.ClientConn, error) {
 	} else {
 		creds = insecure.NewCredentials()
 	}
-	return grpc.NewClient(host, grpc.WithTransportCredentials(creds))
+
+	// TODO retries https://github.com/grpc/grpc-go/blob/master/examples/features/retry/README.md
+	return grpc.NewClient(host,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithInitialWindowSize(windowSize),
+		grpc.WithInitialConnWindowSize(windowSize),
+	)
 }

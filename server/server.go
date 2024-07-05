@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,42 +11,45 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Southclaws/fault/fctx"
 	"github.com/be9/tbc/client"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-type ServerOptions struct {
+// Options for creating a server.
+type Options struct {
 	Token string
 }
 
-type server struct {
-	opts   ServerOptions
+type Server struct {
+	opts   Options
 	cl     client.Interface
 	logger *slog.Logger
+
+	stats Stats
 }
 
-func CreateHandler(
-	client client.Interface,
-	opts ServerOptions,
-) (http.Handler, error) {
-	r := mux.NewRouter()
-	api := r.PathPrefix("/v8/artifacts").Subrouter()
-
-	srv := &server{
+func NewServer(client client.Interface, opts Options) *Server {
+	return &Server{
 		opts:   opts,
 		cl:     client,
 		logger: slog.With(),
 	}
+}
 
-	if opts.Token != "" {
+func (s *Server) CreateHandler() http.Handler {
+	r := mux.NewRouter()
+	api := r.PathPrefix("/v8/artifacts").Subrouter()
+
+	if s.opts.Token != "" {
 		api.Use(func(next http.Handler) http.Handler {
-			expectedHeader := fmt.Sprintf("Bearer %s", opts.Token)
+			expectedHeader := fmt.Sprintf("Bearer %s", s.opts.Token)
 
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != expectedHeader {
-					srv.logger.Error("[tbc] authorization error")
+					s.logger.Error("[tbc] authorization error")
 
 					http.Error(w, "Forbidden", http.StatusForbidden)
 					return
@@ -55,23 +59,20 @@ func CreateHandler(
 		})
 	}
 
-	api.HandleFunc("/events", srv.eventsHandler).Methods("POST")
-	api.HandleFunc("/status", srv.statusHandler).Methods("GET")
-	api.HandleFunc("/{hash}", srv.fileUploadHandler).Methods("PUT")
-	api.HandleFunc("/{hash}", srv.fileCheckHandler).Methods("HEAD")
-	api.HandleFunc("/{hash}", srv.fileDownloadHandler).Methods("GET")
+	api.HandleFunc("/events", s.eventsHandler).Methods("POST")
+	api.HandleFunc("/status", s.statusHandler).Methods("GET")
+	api.HandleFunc("/{hash}", s.uploadArtifactHandler).Methods("PUT")
+	api.HandleFunc("/{hash}", s.artifactExistsHandler).Methods("HEAD")
+	api.HandleFunc("/{hash}", s.downloadArtifactHandler).Methods("GET")
 
-	// TODO
-	//api.HandleFunc("/", srv.multiQueryHandler).Methods("POST")
-
-	return r, nil
+	return r
 }
 
-func (*server) eventsHandler(w http.ResponseWriter, _ *http.Request) {
+func (*Server) eventsHandler(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (*server) statusHandler(w http.ResponseWriter, _ *http.Request) {
+func (*Server) statusHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	jsonBody(w, struct {
@@ -81,16 +82,20 @@ func (*server) statusHandler(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *server) fileUploadHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 	key := getKey(w, r)
 	if key == "" {
 		return
 	}
 
+	reportError := func(msg string, err error) {
+		http.Error(w, "unable to upload", http.StatusInternalServerError)
+		s.logError(err)
+	}
+
 	uploadedFile, err := os.CreateTemp("", "tbc-upload-*.tmp")
 	if err != nil {
-		http.Error(w, "unable to upload", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error creating a temp file", slog.String("err", err.Error()))
+		reportError("error creating a temp file", err)
 		return
 	}
 
@@ -99,54 +104,55 @@ func (s *server) fileUploadHandler(w http.ResponseWriter, r *http.Request) {
 		_ = os.Remove(uploadedFile.Name())
 	}()
 
-	_, err = io.Copy(uploadedFile, r.Body)
+	size, err := io.Copy(uploadedFile, r.Body)
 	if err != nil {
-		http.Error(w, "Error saving file", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error saving uploaded file", slog.String("err", err.Error()))
+		reportError("error saving uploaded file", err)
 		return
 	}
 
 	err = uploadedFile.Close()
 	if err != nil {
-		http.Error(w, "Error saving file", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error closing uploaded file", slog.String("err", err.Error()))
+		reportError("error closing uploaded file", err)
 		return
 	}
 
-	err = s.cl.UploadFile(r.Context(), key, uploadedFile.Name(), collectMetadata(r.Header))
+	err = s.cl.UploadFile(makeContext(r.Context(), r), key, uploadedFile.Name(), collectMetadata(r.Header))
 	if err != nil {
-		http.Error(w, "Error uploading file", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error uploading file", slog.String("err", err.Error()))
+		reportError("error uploading file", err)
 		return
 	}
 
+	s.stats.UploadCount++
+	s.stats.UploadedBytes += size
 	w.WriteHeader(http.StatusAccepted)
 	jsonBody(w, struct {
 		Urls []string `json:"urls"`
 	}{})
 }
 
-func (s *server) fileCheckHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) artifactExistsHandler(w http.ResponseWriter, r *http.Request) {
 	key := getKey(w, r)
 	if key == "" {
 		return
 	}
-	ok, err := s.cl.FindFile(r.Context(), key)
+	ok, err := s.cl.FindFile(makeContext(r.Context(), r), key)
 
 	if err != nil {
 		http.Error(w, "Error looking up file", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error looking up file", slog.String("err", err.Error()))
+		s.logError(err)
 		return
 	}
 
 	if ok {
+		s.stats.ExistsYesCount++
 		w.WriteHeader(http.StatusOK)
 	} else {
+		s.stats.ExistsNoCount++
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
 
-func (s *server) fileDownloadHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 	key := getKey(w, r)
 	if key == "" {
 		return
@@ -154,7 +160,7 @@ func (s *server) fileDownloadHandler(w http.ResponseWriter, r *http.Request) {
 
 	reportError := func(msg string, err error) {
 		http.Error(w, "unable to download", http.StatusInternalServerError)
-		s.logger.Error("[tbc] "+msg, slog.String("err", err.Error()))
+		s.logError(err)
 	}
 
 	downloadedFile, err := os.CreateTemp("", "tbc-download-*.tmp")
@@ -168,10 +174,11 @@ func (s *server) fileDownloadHandler(w http.ResponseWriter, r *http.Request) {
 		_ = os.Remove(downloadedFile.Name())
 	}()
 
-	md, err := s.cl.DownloadFile(r.Context(), key, downloadedFile)
+	md, err := s.cl.DownloadFile(makeContext(r.Context(), r), key, downloadedFile)
 	if err != nil {
 		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 			http.Error(w, "key not found", http.StatusNotFound)
+			s.stats.DownloadNotFoundCount++
 			return
 		}
 
@@ -186,7 +193,36 @@ func (s *server) fileDownloadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.stats.DownloadCount++
+	s.stats.DownloadedBytes += getFileSize(downloadedFile)
 	http.ServeContent(w, r, "", time.UnixMilli(0), downloadedFile)
+}
+
+func makeContext(ctx context.Context, r *http.Request) context.Context {
+	return fctx.WithMeta(ctx,
+		"method", r.Method,
+		"url", r.URL.String(),
+	)
+}
+
+// nolint: contextcheck
+func (s *Server) logError(err error) {
+	s.stats.ErrorsCount++
+
+	var attrs []slog.Attr
+	for k, v := range fctx.Unwrap(err) {
+		attrs = append(attrs, slog.String(k, v))
+	}
+
+	s.logger.LogAttrs(context.Background(), slog.LevelError, fmt.Sprintf("[tbc] %+v", err), attrs...)
+}
+
+func (s *Server) GetStatistics() Stats {
+	return s.stats
+}
+
+func (s *Server) ResetStatistics() {
+	s.stats = Stats{}
 }
 
 func jsonBody(w http.ResponseWriter, v any) {
@@ -230,4 +266,9 @@ func collectMetadata(h http.Header) (md client.Metadata) {
 		}
 	}
 	return
+}
+
+func getFileSize(f *os.File) int64 {
+	ret, _ := f.Seek(0, io.SeekEnd)
+	return ret
 }

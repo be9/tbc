@@ -16,8 +16,8 @@ import (
 )
 
 func TestBadToken(t *testing.T) {
-	r, err := CreateHandler(client.NewInMemoryClient(), ServerOptions{Token: "t0k3n"})
-	assert.NilError(t, err)
+	s := NewServer(client.NewInMemoryClient(), Options{Token: "t0k3n"})
+	r := s.CreateHandler()
 
 	req, err := http.NewRequest("POST", "/v8/artifacts/events", nil)
 	assert.NilError(t, err)
@@ -29,12 +29,10 @@ func TestBadToken(t *testing.T) {
 }
 
 func TestEvents(t *testing.T) {
-	r := createHandler(t, "")
+	r, _ := createHandler("")
 
 	req, err := http.NewRequest("POST", "/v8/artifacts/events", nil)
 	assert.NilError(t, err)
-
-	//req.Header.Set("Authorization", "Bearer t0k3n")
 
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
@@ -43,7 +41,7 @@ func TestEvents(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
-	r := createHandler(t, "")
+	r, _ := createHandler("")
 
 	req, err := http.NewRequest("GET", "/v8/artifacts/status", nil)
 	assert.NilError(t, err)
@@ -62,9 +60,11 @@ func TestUpload(t *testing.T) {
 	)
 
 	cl := client.NewInMemoryClient()
-	r := createHandlerForClient(t, "", cl)
+	r, srv := createHandlerForClient("", cl)
 
 	t.Run("basic upload", func(t *testing.T) {
+		srv.ResetStatistics()
+
 		req := createBaseUploadRequest(t, "key1", bytes.NewBuffer([]byte(input)))
 		rr := httptest.NewRecorder()
 		r.ServeHTTP(rr, req)
@@ -77,9 +77,12 @@ func TestUpload(t *testing.T) {
 		assert.Equal(t, len(md), 0)
 
 		assert.DeepEqual(t, cacheData.String(), input)
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{UploadCount: 1, UploadedBytes: int64(len(input))})
 	})
 
 	t.Run("upload with metadata", func(t *testing.T) {
+		srv.ResetStatistics()
+
 		const tag = "Tc0BmHvJYMIYJ62/zx87YqO0Flxk+5Ovip25NY825CQ="
 		req := createBaseUploadRequest(t, "key2", bytes.NewBuffer([]byte(input)))
 		req.Header.Set("X-Artifact-Duration", "42")
@@ -101,9 +104,12 @@ func TestUpload(t *testing.T) {
 			// other headers should not be recorded
 		})
 		assert.DeepEqual(t, cacheData.String(), input)
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{UploadCount: 1, UploadedBytes: int64(len(input))})
 	})
 
 	t.Run("teamId and slug scoping", func(t *testing.T) {
+		srv.ResetStatistics()
+
 		const sharedKey = "key3"
 
 		req1 := createBaseUploadRequest(t, sharedKey+"?teamId=tid1&slug=slug1", bytes.NewBuffer([]byte(input)))
@@ -123,6 +129,7 @@ func TestUpload(t *testing.T) {
 		assert.NilError(t, err)
 
 		assert.DeepEqual(t, cacheData.String(), input2)
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{UploadCount: 2, UploadedBytes: int64(len(input) + len(input2))})
 	})
 }
 
@@ -131,9 +138,11 @@ func TestCheck(t *testing.T) {
 	uploadFile(t, cl, "key", []byte("DATA"), nil)
 	uploadFile(t, cl, "slug/teamid/key", []byte("DATA"), nil)
 
-	r := createHandlerForClient(t, "", cl)
+	r, srv := createHandlerForClient("", cl)
 
 	t.Run("key exists", func(t *testing.T) {
+		srv.ResetStatistics()
+
 		for _, k := range []string{"key", "key?teamId=teamid&slug=slug"} {
 			req := createCheckRequest(t, k)
 			rr := httptest.NewRecorder()
@@ -141,9 +150,13 @@ func TestCheck(t *testing.T) {
 
 			assert.Equal(t, rr.Code, http.StatusOK)
 		}
+
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{ExistsYesCount: 2})
 	})
 
 	t.Run("key does not exist", func(t *testing.T) {
+		srv.ResetStatistics()
+
 		for _, k := range []string{"unknown key", "key?teamId=badteamid&slug=slug"} {
 			req := createCheckRequest(t, k)
 			rr := httptest.NewRecorder()
@@ -151,6 +164,8 @@ func TestCheck(t *testing.T) {
 
 			assert.Equal(t, rr.Code, http.StatusNotFound)
 		}
+
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{ExistsNoCount: 2})
 	})
 }
 
@@ -164,9 +179,10 @@ func TestDownload(t *testing.T) {
 	})
 	uploadFile(t, cl, "slug/teamid/key", randomContent, nil)
 
-	r := createHandlerForClient(t, "", cl)
+	r, srv := createHandlerForClient("", cl)
 
 	t.Run("successful download", func(t *testing.T) {
+		srv.ResetStatistics()
 		req := createDownloadRequest(t, "key")
 		rr := httptest.NewRecorder()
 		r.ServeHTTP(rr, req)
@@ -175,9 +191,11 @@ func TestDownload(t *testing.T) {
 		assert.Equal(t, bytes.Equal(rr.Body.Bytes(), randomContent), true)
 		assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "42")
 		assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), "hmac tag")
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{DownloadCount: 1, DownloadedBytes: int64(len(randomContent))})
 	})
 
 	t.Run("scoped download", func(t *testing.T) {
+		srv.ResetStatistics()
 		req := createDownloadRequest(t, "key?teamId=teamid&slug=slug")
 		rr := httptest.NewRecorder()
 		r.ServeHTTP(rr, req)
@@ -186,9 +204,11 @@ func TestDownload(t *testing.T) {
 		assert.Equal(t, bytes.Equal(rr.Body.Bytes(), randomContent), true)
 		assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "")
 		assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), "")
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{DownloadCount: 1, DownloadedBytes: int64(len(randomContent))})
 	})
 
 	t.Run("not found", func(t *testing.T) {
+		srv.ResetStatistics()
 		for _, k := range []string{"unknown key", "key?teamId=badteamid&slug=slug"} {
 			req := createDownloadRequest(t, k)
 			rr := httptest.NewRecorder()
@@ -196,13 +216,14 @@ func TestDownload(t *testing.T) {
 
 			assert.Equal(t, rr.Code, http.StatusNotFound)
 		}
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{DownloadNotFoundCount: 2})
 	})
 }
 
 func TestBidirectional(t *testing.T) {
 	var (
 		cl      = client.NewInMemoryClient()
-		r       = createHandlerForClient(t, "", cl)
+		r, srv  = createHandlerForClient("", cl)
 		content = randomBytes(t, 64*1024*1024) // 64 MiB
 	)
 	const (
@@ -232,16 +253,23 @@ func TestBidirectional(t *testing.T) {
 	assert.Equal(t, bytes.Equal(rr.Body.Bytes(), content), true)
 	assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "42")
 	assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), tag)
+
+	assert.DeepEqual(t, srv.GetStatistics(), Stats{
+		DownloadCount:   1,
+		UploadCount:     1,
+		UploadedBytes:   int64(len(content)),
+		DownloadedBytes: int64(len(content)),
+	})
 }
 
-func createHandler(t *testing.T, token string) http.Handler {
-	return createHandlerForClient(t, token, client.NewInMemoryClient())
+func createHandler(token string) (http.Handler, *Server) {
+	return createHandlerForClient(token, client.NewInMemoryClient())
 }
 
-func createHandlerForClient(t *testing.T, token string, cl client.Interface) http.Handler {
-	r, err := CreateHandler(cl, ServerOptions{Token: token})
-	assert.NilError(t, err)
-	return r
+func createHandlerForClient(token string, cl client.Interface) (http.Handler, *Server) {
+	s := NewServer(cl, Options{Token: token})
+	r := s.CreateHandler()
+	return r, s
 }
 
 func createBaseUploadRequest(t *testing.T, key string, body io.Reader) *http.Request {
