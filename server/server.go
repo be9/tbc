@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Southclaws/fault/fctx"
 	"github.com/be9/tbc/client"
 	"github.com/gorilla/mux"
 	"google.golang.org/grpc/codes"
@@ -88,8 +90,7 @@ func (s *Server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 
 	reportError := func(msg string, err error) {
 		http.Error(w, "unable to upload", http.StatusInternalServerError)
-		s.logger.Error("[tbc] "+msg, slog.String("err", err.Error()))
-		s.stats.ErrorsCount++
+		s.logError(err)
 	}
 
 	uploadedFile, err := os.CreateTemp("", "tbc-upload-*.tmp")
@@ -115,7 +116,7 @@ func (s *Server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.cl.UploadFile(r.Context(), key, uploadedFile.Name(), collectMetadata(r.Header))
+	err = s.cl.UploadFile(s.context(r), key, uploadedFile.Name(), collectMetadata(r.Header))
 	if err != nil {
 		reportError("error uploading file", err)
 		return
@@ -134,12 +135,11 @@ func (s *Server) artifactExistsHandler(w http.ResponseWriter, r *http.Request) {
 	if key == "" {
 		return
 	}
-	ok, err := s.cl.FindFile(r.Context(), key)
+	ok, err := s.cl.FindFile(s.context(r), key)
 
 	if err != nil {
 		http.Error(w, "Error looking up file", http.StatusInternalServerError)
-		s.logger.Error("[tbc] error looking up file", slog.String("err", err.Error()))
-		s.stats.ErrorsCount++
+		s.logError(err)
 		return
 	}
 
@@ -160,8 +160,7 @@ func (s *Server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request)
 
 	reportError := func(msg string, err error) {
 		http.Error(w, "unable to download", http.StatusInternalServerError)
-		s.logger.Error("[tbc] "+msg, slog.String("err", err.Error()))
-		s.stats.ErrorsCount++
+		s.logError(err)
 	}
 
 	downloadedFile, err := os.CreateTemp("", "tbc-download-*.tmp")
@@ -175,7 +174,7 @@ func (s *Server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request)
 		_ = os.Remove(downloadedFile.Name())
 	}()
 
-	md, err := s.cl.DownloadFile(r.Context(), key, downloadedFile)
+	md, err := s.cl.DownloadFile(s.context(r), key, downloadedFile)
 	if err != nil {
 		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 			http.Error(w, "key not found", http.StatusNotFound)
@@ -197,6 +196,25 @@ func (s *Server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request)
 	s.stats.DownloadCount++
 	s.stats.DownloadedBytes += getFileSize(downloadedFile)
 	http.ServeContent(w, r, "", time.UnixMilli(0), downloadedFile)
+}
+
+func (s *Server) context(r *http.Request) context.Context {
+	ctx := fctx.WithMeta(r.Context(),
+		"method", r.Method,
+		"url", r.URL.String(),
+	)
+	return ctx
+}
+
+func (s *Server) logError(err error) {
+	s.stats.ErrorsCount++
+
+	var attrs []slog.Attr
+	for k, v := range fctx.Unwrap(err) {
+		attrs = append(attrs, slog.String(k, v))
+	}
+
+	s.logger.LogAttrs(context.Background(), slog.LevelError, fmt.Sprintf("[tbc] %+v", err), attrs...)
 }
 
 func (s *Server) GetStatistics() Stats {

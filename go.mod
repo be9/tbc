@@ -14,6 +14,7 @@ require (
 
 require (
 	cloud.google.com/go/longrunning v0.5.7 // indirect
+	github.com/Southclaws/fault v0.8.1 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.4 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect

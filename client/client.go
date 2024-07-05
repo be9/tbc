@@ -3,12 +3,14 @@ package client
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"slices"
 
+	"github.com/Southclaws/fault"
+	"github.com/Southclaws/fault/fctx"
+	"github.com/Southclaws/fault/fmsg"
 	"github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/google/uuid"
 	"google.golang.org/api/transport/bytestream"
@@ -45,16 +47,16 @@ func NewClient(cc *grpc.ClientConn) Interface {
 func (c *client) CheckCapabilities(ctx context.Context) error {
 	capabilities, err := c.cap.GetCapabilities(ctx, &remoteexecution.GetCapabilitiesRequest{})
 	if err != nil {
-		return fmt.Errorf("GetCapabilities() failed: %w", err)
+		return fault.Wrap(err, fmsg.With("GetCapabilities() failed"), fctx.With(ctx))
 	}
 
 	cc := capabilities.GetCacheCapabilities()
 	if !slices.Contains(cc.GetDigestFunctions(), remoteexecution.DigestFunction_SHA256) {
-		return errors.New("SHA256 is not supported by remote cache")
+		return fault.New("SHA256 is not supported by remote cache", fctx.With(ctx))
 	}
 
 	if !cc.GetActionCacheUpdateCapabilities().GetUpdateEnabled() {
-		return errors.New("AC update is not supported by remote cache")
+		return fault.New("AC update is not supported by remote cache", fctx.With(ctx))
 	}
 
 	return nil
@@ -68,18 +70,18 @@ const blobFileName = "cache_blob"
 func (c *client) UploadFile(ctx context.Context, key, filePath string, metadata Metadata) error {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return fmt.Errorf("error opening file: %w", err)
+		return fault.Wrap(err, fmsg.With("error opening file"), fctx.With(ctx))
 	}
 	defer func() { _ = f.Close() }()
 
 	fileDigest, err := c.uploadToCAS(ctx, f)
 	if err != nil {
-		return err
+		return fault.Wrap(err, fmsg.With("CAS upload failed"), fctx.With(ctx))
 	}
 
 	acProtos, err := prepareACProtos(key)
 	if err != nil {
-		return err
+		return fault.Wrap(err, fctx.With(ctx))
 	}
 
 	updateResponse, err := c.cas.BatchUpdateBlobs(ctx, &remoteexecution.BatchUpdateBlobsRequest{
@@ -89,12 +91,14 @@ func (c *client) UploadFile(ctx context.Context, key, filePath string, metadata 
 		},
 	})
 	if err != nil {
-		return err
+		return fault.Wrap(err, fmsg.With("BatchUpdateBlobs failed"), fctx.With(ctx))
 	}
 
 	for _, response := range updateResponse.Responses {
 		if response.GetStatus().GetCode() != 0 {
-			return fmt.Errorf("BatchUpdateBlobs failed: %s", prototext.Format(updateResponse))
+			return fault.Wrap(err,
+				fmsg.With(fmt.Sprintf("BatchUpdateBlobs failed. %s", prototext.Format(updateResponse))),
+				fctx.With(ctx))
 		}
 	}
 
@@ -122,20 +126,20 @@ func (c *client) UploadFile(ctx context.Context, key, filePath string, metadata 
 			ExecutionMetadata: eam,
 		},
 	})
-	return err
+	return fault.Wrap(err, fmsg.With("UpdateActionResult failed"), fctx.With(ctx))
 }
 
 // uploadToCAS uses the bytestream client to upload the file to CAS.
 func (c *client) uploadToCAS(ctx context.Context, f *os.File) (d *remoteexecution.Digest, err error) {
 	hash := sha256.New()
 	if _, err = io.Copy(hash, f); err != nil {
-		err = fmt.Errorf("error hashing file: %w", err)
+		err = fault.Wrap(err, fmsg.With("error hashing file"), fctx.With(ctx))
 		return
 	}
 
 	fi, err := f.Stat()
 	if err != nil {
-		err = fmt.Errorf("error getting file info: %w", err)
+		err = fault.Wrap(err, fmsg.With("error getting file info"), fctx.With(ctx))
 		return
 	}
 
@@ -145,16 +149,17 @@ func (c *client) uploadToCAS(ctx context.Context, f *os.File) (d *remoteexecutio
 	}
 	_, err = f.Seek(0, 0)
 	if err != nil {
-		err = fmt.Errorf("error seeking file: %w", err)
+		err = fault.Wrap(err, fmsg.With("error seeking file"), fctx.With(ctx))
 		return
 	}
 
 	w, err := c.bs.NewWriter(ctx, getUploadResourceName(d))
 	if err != nil {
+		err = fault.Wrap(err, fmsg.With("error creating upload writer"), fctx.With(ctx))
 		return
 	}
 	if _, err = io.Copy(w, f); err != nil {
-		err = fmt.Errorf("upload error: %w", err)
+		err = fault.Wrap(err, fmsg.With("upload error"), fctx.With(ctx))
 		return
 	}
 	err = w.Close()
@@ -199,11 +204,13 @@ func prepareACProtos(key string) (result acProtos, err error) {
 func prepareProto(m proto.Message) (digest *remoteexecution.Digest, data []byte, err error) {
 	data, err = proto.Marshal(m)
 	if err != nil {
+		err = fault.Wrap(err, fmsg.With("marshaling failed"))
 		return
 	}
 
 	h := sha256.New()
 	if _, err = h.Write(data); err != nil {
+		err = fault.Wrap(err, fmsg.With("hashing failed"))
 		return
 	}
 	digest = &remoteexecution.Digest{
@@ -216,10 +223,12 @@ func prepareProto(m proto.Message) (digest *remoteexecution.Digest, data []byte,
 func convertMetadataToProto(metadata Metadata) (result []*anypb.Any, err error) {
 	val, err := structpb.NewStruct(metadata)
 	if err != nil {
+		err = fault.Wrap(err, fmsg.With("NewStruct failed"))
 		return
 	}
 	payload, err := anypb.New(val)
 	if err != nil {
+		err = fault.Wrap(err, fmsg.With("anypb.New failed"))
 		return
 	}
 
@@ -233,7 +242,7 @@ func convertMetadataFromProto(in []*anypb.Any) (Metadata, error) {
 
 	structMetadata := &structpb.Struct{}
 	if err := in[0].UnmarshalTo(structMetadata); err != nil {
-		return nil, err
+		return nil, fault.Wrap(err, fmsg.With("unmarshaling failed"))
 	}
 	return structMetadata.AsMap(), nil
 }
@@ -253,7 +262,7 @@ func (c *client) FindFile(ctx context.Context, key string) (bool, error) {
 }
 
 // DownloadFile attempts to download a file from the remote cache identified by key. The file is
-// written at filePath.
+// written to w.
 func (c *client) DownloadFile(ctx context.Context, key string, w io.Writer) (md Metadata, err error) {
 	of, md, err := c.locateArtifact(ctx, key)
 	if err != nil {
@@ -262,13 +271,14 @@ func (c *client) DownloadFile(ctx context.Context, key string, w io.Writer) (md 
 
 	rdr, err := c.bs.NewReader(ctx, getDownloadResourceName(of.GetDigest()))
 	if err != nil {
+		err = fault.Wrap(err, fmsg.With("NewReader failed"), fctx.With(ctx))
 		return
 	}
 
 	defer func() { _ = rdr.Close() }()
 
 	if _, err = io.Copy(w, rdr); err != nil {
-		err = fmt.Errorf("fetch error: %w", err)
+		err = fault.Wrap(err, fmsg.With("fetching from bytestream client failed"), fctx.With(ctx))
 		return
 	}
 	return
@@ -277,12 +287,14 @@ func (c *client) DownloadFile(ctx context.Context, key string, w io.Writer) (md 
 func (c *client) locateArtifact(ctx context.Context, key string) (of *remoteexecution.OutputFile, md Metadata, err error) {
 	acProtos, err := prepareACProtos(key)
 	if err != nil {
+		err = fault.Wrap(err, fctx.With(ctx))
 		return
 	}
 	resp, err := c.ac.GetActionResult(ctx, &remoteexecution.GetActionResultRequest{
 		ActionDigest: acProtos.action.digest,
 	})
 	if err != nil {
+		err = fault.Wrap(err, fmsg.With("GetActionResult failed"), fctx.With(ctx))
 		return
 	}
 
@@ -290,7 +302,7 @@ func (c *client) locateArtifact(ctx context.Context, key string) (of *remoteexec
 		return f.GetPath() == blobFileName
 	})
 	if idx < 0 {
-		err = fmt.Errorf("cache blob not found amount output files")
+		err = fault.New("cache blob not found amount output files", fctx.With(ctx))
 		return
 	}
 	md, err = convertMetadataFromProto(resp.GetExecutionMetadata().GetAuxiliaryMetadata())

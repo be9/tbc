@@ -12,10 +12,10 @@ type Stats struct {
 	ExistsYesCount        int `slog:"exists_yes"`
 	ExistsNoCount         int `slog:"exists_no"`
 	DownloadCount         int `slog:"downloads"`
-	DownloadNotFoundCount int `slog:"download_not_found"`
+	DownloadNotFoundCount int `slog:"downloads_not_found"`
 
-	UploadedBytes   int64 `slog:"ul"`
-	DownloadedBytes int64 `slog:"dl"`
+	UploadedBytes   int64 `slog:"ul_bytes"`
+	DownloadedBytes int64 `slog:"dl_bytes"`
 }
 
 // SlogArgs converts stats to an array than can be passed to slog logging functions.
