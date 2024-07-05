@@ -17,8 +17,7 @@ import (
 
 func TestBadToken(t *testing.T) {
 	s := NewServer(client.NewInMemoryClient(), Options{Token: "t0k3n"})
-	r, err := s.CreateHandler()
-	assert.NilError(t, err)
+	r := s.CreateHandler()
 
 	req, err := http.NewRequest("POST", "/v8/artifacts/events", nil)
 	assert.NilError(t, err)
@@ -30,7 +29,7 @@ func TestBadToken(t *testing.T) {
 }
 
 func TestEvents(t *testing.T) {
-	r, _ := createHandler(t, "")
+	r, _ := createHandler("")
 
 	req, err := http.NewRequest("POST", "/v8/artifacts/events", nil)
 	assert.NilError(t, err)
@@ -42,7 +41,7 @@ func TestEvents(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
-	r, _ := createHandler(t, "")
+	r, _ := createHandler("")
 
 	req, err := http.NewRequest("GET", "/v8/artifacts/status", nil)
 	assert.NilError(t, err)
@@ -61,7 +60,7 @@ func TestUpload(t *testing.T) {
 	)
 
 	cl := client.NewInMemoryClient()
-	r, srv := createHandlerForClient(t, "", cl)
+	r, srv := createHandlerForClient("", cl)
 
 	t.Run("basic upload", func(t *testing.T) {
 		srv.ResetStatistics()
@@ -78,7 +77,7 @@ func TestUpload(t *testing.T) {
 		assert.Equal(t, len(md), 0)
 
 		assert.DeepEqual(t, cacheData.String(), input)
-		assert.DeepEqual(t, srv.GetStatistics(), Stats{UploadCount: 1})
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{UploadCount: 1, UploadedBytes: int64(len(input))})
 	})
 
 	t.Run("upload with metadata", func(t *testing.T) {
@@ -105,7 +104,7 @@ func TestUpload(t *testing.T) {
 			// other headers should not be recorded
 		})
 		assert.DeepEqual(t, cacheData.String(), input)
-		assert.DeepEqual(t, srv.GetStatistics(), Stats{UploadCount: 1})
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{UploadCount: 1, UploadedBytes: int64(len(input))})
 	})
 
 	t.Run("teamId and slug scoping", func(t *testing.T) {
@@ -130,7 +129,7 @@ func TestUpload(t *testing.T) {
 		assert.NilError(t, err)
 
 		assert.DeepEqual(t, cacheData.String(), input2)
-		assert.DeepEqual(t, srv.GetStatistics(), Stats{UploadCount: 2})
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{UploadCount: 2, UploadedBytes: int64(len(input) + len(input2))})
 	})
 }
 
@@ -139,7 +138,7 @@ func TestCheck(t *testing.T) {
 	uploadFile(t, cl, "key", []byte("DATA"), nil)
 	uploadFile(t, cl, "slug/teamid/key", []byte("DATA"), nil)
 
-	r, srv := createHandlerForClient(t, "", cl)
+	r, srv := createHandlerForClient("", cl)
 
 	t.Run("key exists", func(t *testing.T) {
 		srv.ResetStatistics()
@@ -180,7 +179,7 @@ func TestDownload(t *testing.T) {
 	})
 	uploadFile(t, cl, "slug/teamid/key", randomContent, nil)
 
-	r, srv := createHandlerForClient(t, "", cl)
+	r, srv := createHandlerForClient("", cl)
 
 	t.Run("successful download", func(t *testing.T) {
 		srv.ResetStatistics()
@@ -192,7 +191,7 @@ func TestDownload(t *testing.T) {
 		assert.Equal(t, bytes.Equal(rr.Body.Bytes(), randomContent), true)
 		assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "42")
 		assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), "hmac tag")
-		assert.DeepEqual(t, srv.GetStatistics(), Stats{DownloadCount: 1})
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{DownloadCount: 1, DownloadedBytes: int64(len(randomContent))})
 	})
 
 	t.Run("scoped download", func(t *testing.T) {
@@ -205,7 +204,7 @@ func TestDownload(t *testing.T) {
 		assert.Equal(t, bytes.Equal(rr.Body.Bytes(), randomContent), true)
 		assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "")
 		assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), "")
-		assert.DeepEqual(t, srv.GetStatistics(), Stats{DownloadCount: 1})
+		assert.DeepEqual(t, srv.GetStatistics(), Stats{DownloadCount: 1, DownloadedBytes: int64(len(randomContent))})
 	})
 
 	t.Run("not found", func(t *testing.T) {
@@ -224,7 +223,7 @@ func TestDownload(t *testing.T) {
 func TestBidirectional(t *testing.T) {
 	var (
 		cl      = client.NewInMemoryClient()
-		r, srv  = createHandlerForClient(t, "", cl)
+		r, srv  = createHandlerForClient("", cl)
 		content = randomBytes(t, 64*1024*1024) // 64 MiB
 	)
 	const (
@@ -255,17 +254,21 @@ func TestBidirectional(t *testing.T) {
 	assert.Equal(t, rr.Header().Get("X-Artifact-Duration"), "42")
 	assert.Equal(t, rr.Header().Get("X-Artifact-Tag"), tag)
 
-	assert.DeepEqual(t, srv.GetStatistics(), Stats{DownloadCount: 1, UploadCount: 1})
+	assert.DeepEqual(t, srv.GetStatistics(), Stats{
+		DownloadCount:   1,
+		UploadCount:     1,
+		UploadedBytes:   int64(len(content)),
+		DownloadedBytes: int64(len(content)),
+	})
 }
 
-func createHandler(t *testing.T, token string) (http.Handler, *Server) {
-	return createHandlerForClient(t, token, client.NewInMemoryClient())
+func createHandler(token string) (http.Handler, *Server) {
+	return createHandlerForClient(token, client.NewInMemoryClient())
 }
 
-func createHandlerForClient(t *testing.T, token string, cl client.Interface) (http.Handler, *Server) {
+func createHandlerForClient(token string, cl client.Interface) (http.Handler, *Server) {
 	s := NewServer(cl, Options{Token: token})
-	r, err := s.CreateHandler()
-	assert.NilError(t, err)
+	r := s.CreateHandler()
 	return r, s
 }
 

@@ -21,16 +21,6 @@ type Options struct {
 	Token string
 }
 
-// Stats holds statistics for server operation. Can be requested with Server.GetStatistics().
-type Stats struct {
-	ErrorsCount           int `json:"errors,omitempty"`
-	UploadCount           int `json:"uploads,omitempty"`
-	ExistsYesCount        int `json:"exists_yes,omitempty"`
-	ExistsNoCount         int `json:"exists_no,omitempty"`
-	DownloadCount         int `json:"downloads,omitempty"`
-	DownloadNotFoundCount int `json:"download_not_found,omitempty"`
-}
-
 type Server struct {
 	opts   Options
 	cl     client.Interface
@@ -47,7 +37,7 @@ func NewServer(client client.Interface, opts Options) *Server {
 	}
 }
 
-func (s *Server) CreateHandler() (http.Handler, error) {
+func (s *Server) CreateHandler() http.Handler {
 	r := mux.NewRouter()
 	api := r.PathPrefix("/v8/artifacts").Subrouter()
 
@@ -73,7 +63,7 @@ func (s *Server) CreateHandler() (http.Handler, error) {
 	api.HandleFunc("/{hash}", s.artifactExistsHandler).Methods("HEAD")
 	api.HandleFunc("/{hash}", s.downloadArtifactHandler).Methods("GET")
 
-	return r, nil
+	return r
 }
 
 func (*Server) eventsHandler(w http.ResponseWriter, _ *http.Request) {
@@ -113,7 +103,7 @@ func (s *Server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 		_ = os.Remove(uploadedFile.Name())
 	}()
 
-	_, err = io.Copy(uploadedFile, r.Body)
+	size, err := io.Copy(uploadedFile, r.Body)
 	if err != nil {
 		reportError("error saving uploaded file", err)
 		return
@@ -132,6 +122,7 @@ func (s *Server) uploadArtifactHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.stats.UploadCount++
+	s.stats.UploadedBytes += size
 	w.WriteHeader(http.StatusAccepted)
 	jsonBody(w, struct {
 		Urls []string `json:"urls"`
@@ -204,6 +195,7 @@ func (s *Server) downloadArtifactHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.stats.DownloadCount++
+	s.stats.DownloadedBytes += getFileSize(downloadedFile)
 	http.ServeContent(w, r, "", time.UnixMilli(0), downloadedFile)
 }
 
@@ -256,4 +248,9 @@ func collectMetadata(h http.Header) (md client.Metadata) {
 		}
 	}
 	return
+}
+
+func getFileSize(f *os.File) int64 {
+	ret, _ := f.Seek(0, io.SeekEnd)
+	return ret
 }
