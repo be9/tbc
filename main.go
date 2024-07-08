@@ -11,13 +11,8 @@ import (
 )
 
 const (
-	TLSClientCertFlag = "tls_client_certificate"
-	TLSClientKeyFlag  = "tls_client_key"
-	AddrFlag          = "addr"
-	HostFlag          = "host"
-	VerboseFlag       = "verbose"
-	SummaryFlag       = "summary"
-	TimeoutFlag       = "timeout"
+	VerboseFlag = "verbose"
+	SummaryFlag = "summary"
 
 	defaultCacheTimeout = 30 * time.Second
 )
@@ -33,13 +28,62 @@ func main() {
 		Name:  "tbc",
 		Usage: "TurboRepo <--> Bazel Remote Cache Proxy",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: HostFlag, Usage: "Remote cache server `HOST`", Required: true, Aliases: []string{"H"}, Destination: &opts.RemoteCacheHost},
-			&cli.StringFlag{Name: AddrFlag, Usage: "Address to bind to", Value: ":8080", Destination: &opts.BindAddr},
-			&cli.StringFlag{Name: TLSClientCertFlag, Usage: "TLS certificate `FILE`", TakesFile: true, Destination: &certFile},
-			&cli.StringFlag{Name: TLSClientKeyFlag, Usage: "TLS key `FILE`", TakesFile: true, Destination: &keyFile},
-			&cli.BoolFlag{Name: VerboseFlag, Aliases: []string{"v"}, Usage: "Be more verbose"},
-			&cli.BoolFlag{Name: SummaryFlag, Aliases: []string{"s"}, Usage: "Print server summary when the wrapped command exits"},
-			&cli.DurationFlag{Name: TimeoutFlag, Usage: "Cache ops timeout", Value: defaultCacheTimeout, Destination: &opts.RemoteCacheTimeout},
+			&cli.StringFlag{
+				Name:        "host",
+				EnvVars:     []string{"TBC_HOST"},
+				Usage:       "Remote cache server `HOST`",
+				Required:    true,
+				Aliases:     []string{"H"},
+				Destination: &opts.RemoteCacheHost,
+			},
+			&cli.StringFlag{
+				Name:        "addr",
+				EnvVars:     []string{"TBC_ADDR"},
+				Usage:       "Address to bind to",
+				Value:       ":8080",
+				Destination: &opts.BindAddr,
+			},
+			&cli.StringFlag{
+				Name:        "tls_client_certificate",
+				EnvVars:     []string{"TBC_CLIENT_CERT"},
+				Usage:       "TLS certificate `FILE`",
+				TakesFile:   true,
+				Destination: &certFile,
+			},
+			&cli.StringFlag{
+				Name:        "tls_client_key",
+				EnvVars:     []string{"TBC_CLIENT_KEY"},
+				Usage:       "TLS key `FILE`",
+				TakesFile:   true,
+				Destination: &keyFile,
+			},
+			&cli.DurationFlag{
+				Name:        "timeout",
+				EnvVars:     []string{"TBC_CLIENT_TIMEOUT"},
+				Usage:       "Cache ops timeout",
+				Value:       defaultCacheTimeout,
+				Destination: &opts.RemoteCacheTimeout,
+			},
+			&cli.BoolFlag{
+				Name:        "auto-env",
+				EnvVars:     []string{"TBC_AUTO_ENV"},
+				Usage:       "Set up environment for turbo",
+				Value:       true,
+				Destination: &opts.AutoEnv,
+			},
+
+			&cli.BoolFlag{
+				Name:    VerboseFlag,
+				EnvVars: []string{"TBC_VERBOSE"},
+				Aliases: []string{"v"},
+				Usage:   "Be more verbose",
+			},
+			&cli.BoolFlag{
+				Name:    SummaryFlag,
+				EnvVars: []string{"TBC_SUMMARY"},
+				Aliases: []string{"s"},
+				Usage:   "Print server summary when the wrapped command exits",
+			},
 		},
 		Before: func(c *cli.Context) error {
 			if c.Bool(VerboseFlag) {
