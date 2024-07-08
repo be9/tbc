@@ -64,6 +64,7 @@ jobs:
       # This is required by turbo with "remoteCache": { "signature": true }
       # tbc --auto-env does not set this variable.
       TURBO_REMOTE_CACHE_SIGNATURE_KEY: super_secret
+      TURBO_TELEMETRY_DISABLED: 1
       TBC_SUMMARY: true
       TBC_HOST: localhost:9092
 
@@ -100,8 +101,8 @@ jobs:
         run: chmod +x $GITHUB_WORKSPACE/tbc
 
       - name: Build monorepo for the first time
-        run: |
-          cd end2end/monorepo 
+        run: >
+          cd end2end/monorepo && 
           $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/first_build.log
 
       - name: Check that cache worked correctly
@@ -111,12 +112,12 @@ jobs:
         run: pnpm -C end2end/monorepo wipe
 
       - name: Build monorepo for the second time to check that artifacts were taken from the remote cache
-        run: |
-          cd end2end/monorepo 
+        run: >
+          cd end2end/monorepo && 
           $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/second_build.log
 
       - name: Check that cache worked correctly for the second time
-        run: |
+        run: >
           grep -q "FULL TURBO" second_build.log &&
           grep -q "server stats downloads=2" second_build.log
 
@@ -124,11 +125,11 @@ jobs:
         env:
           TBC_HOST: example.org:9093    # invalid
           TBC_IGNORE_FAILURES: true
-        run: |
-          cd end2end/monorepo
+        run: >
+          cd end2end/monorepo &&
           $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/third_build.log
 
       - name: Check the log
-        run: |
+        run: >
           grep -q "FULL TURBO" third_build.log && 
           grep -q "cache proxy failed, just running the command" third_build.log
