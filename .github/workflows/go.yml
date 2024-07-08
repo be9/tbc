@@ -70,13 +70,14 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           run_install: false
+          package_json_file: end2end/monorepo/package.json
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version-file: end2end/.tool-versions
           cache: 'pnpm'
-          cache-dependency-path: end2end/monorepo/subdir/pnpm-lock.yaml
+          cache-dependency-path: end2end/monorepo/pnpm-lock.yaml
 
       - name: Grab tbc CLI
         uses: actions/download-artifact@v4
