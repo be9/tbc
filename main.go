@@ -104,6 +104,9 @@ func main() {
 				opts.RemoteCacheTLS = &cmd.TLSCerts{CertPEM: certPEMBlock, KeyPEM: keyPEMBlock}
 			}
 
+			opts.Command = c.Args().First()
+			opts.Args = c.Args().Tail()
+
 			return nil
 		},
 		Action: func(c *cli.Context) error {
