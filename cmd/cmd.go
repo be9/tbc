@@ -11,12 +11,141 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Southclaws/fault"
+	"github.com/Southclaws/fault/fmsg"
+	"github.com/Southclaws/fault/ftag"
+	"github.com/hashicorp/go-retryablehttp"
+
 	"github.com/be9/tbc/client"
 	"github.com/be9/tbc/server"
-	"github.com/hashicorp/go-retryablehttp"
-	"github.com/urfave/cli/v2"
 )
 
+type Options struct {
+	// The command to run.
+	Command string
+	// Command's arguments.
+	Args []string
+
+	RemoteCacheHost string
+	// Timeout used for remote cache operations
+	RemoteCacheTimeout time.Duration
+	RemoteCacheTLS     *TLSCerts // nil means insecure connection
+
+	BindAddr string
+}
+
+type TLSCerts struct {
+	CertPEM, KeyPEM []byte
+}
+
+type Cmd struct {
+	opts   Options
+	Client client.Interface
+	Server *server.Server
+}
+
+const (
+	ClientFailure ftag.Kind = "REMOTE_CACHE_CLIENT_FAILURE"
+	ServerFailure ftag.Kind = "PROXY_SERVER_FAILURE"
+)
+
+// Main is the CLI entry.
+func Main(opts Options) (exitCode int, serverStats server.Stats, err error) {
+	cmd := &Cmd{opts: opts}
+	if err = cmd.instantiateClient(); err != nil {
+		return 1, server.Stats{}, fault.Wrap(err,
+			fmsg.With("failed to create remote cache client"),
+			ftag.With(ClientFailure))
+	}
+	if err = cmd.startServer(); err != nil {
+		return 1, server.Stats{}, fault.Wrap(err,
+			fmsg.With("failed to start proxy server"),
+			ftag.With(ServerFailure))
+	}
+
+	// Start the command in the background
+	c := exec.Command(cmd.opts.Command, cmd.opts.Args...)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+
+	if err = c.Start(); err != nil {
+		return 1, server.Stats{}, fault.Wrap(err, fmsg.With("error starting command"))
+	}
+
+	if err = c.Wait(); err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		} else {
+			return 1, server.Stats{}, fault.Wrap(err, fmsg.With("error running command"))
+		}
+	}
+
+	return exitCode, cmd.Server.GetStatistics(), nil
+}
+
+// instantiateClient creates the client connection and runs CheckCapabilities
+func (cmd *Cmd) instantiateClient() error {
+	var certPEM, keyPEM []byte
+
+	if cmd.opts.RemoteCacheTLS != nil {
+		certPEM = cmd.opts.RemoteCacheTLS.CertPEM
+		keyPEM = cmd.opts.RemoteCacheTLS.KeyPEM
+	}
+
+	cc, err := client.NewClientConn(cmd.opts.RemoteCacheHost, certPEM, keyPEM)
+	if err != nil {
+		return err
+	}
+	cl := client.NewClient(cc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), cmd.opts.RemoteCacheTimeout)
+	defer cancel()
+
+	slog.Debug("checking server capabilities")
+	if err = cl.CheckCapabilities(ctx); err != nil {
+		return err
+	}
+
+	cmd.Client = cl
+
+	return nil
+}
+
+// startServer creates the server, starts HTTP listener in a goroutine, and uses HTTP GET
+// with retries to check that the server is up.
+func (cmd *Cmd) startServer() error {
+	srv := server.NewServer(cmd.Client, server.Options{}) // the token is not used
+
+	addr := cmd.opts.BindAddr
+	httpSrv := &http.Server{
+		Addr:    addr,
+		Handler: srv.CreateHandler(),
+	}
+
+	go func() {
+		slog.Debug("starting HTTP server", slog.String("addr", addr))
+
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			// we can't directly signal this error from the goroutine, but in case this happens,
+			// the accessibility check will fail.
+			slog.Error(err.Error())
+		}
+	}()
+
+	hc := retryablehttp.NewClient()
+	hc.Logger = nil
+	if resp, err := hc.Get(serverCheckURL(addr)); err != nil {
+		return err
+	} else {
+		_ = resp.Body.Close()
+		slog.Debug("HTTP server is accessible", slog.Int("status", resp.StatusCode))
+	}
+
+	cmd.Server = srv
+	return nil
+}
+
+/*
 const (
 	TLSClientCertFlag = "tls_client_certificate"
 	TLSClientKeyFlag  = "tls_client_key"
@@ -52,7 +181,7 @@ func CreateApp() *cli.App {
 		Action:          runProxy,
 		HideHelpCommand: true,
 		ArgsUsage:       "command <command arguments>",
-		Description: `Spin up a Turborepo-compatible remote cache server that forwards requests to a Bazel-compatible remote cache server 
+		Description: `Spin up a Turborepo-compatible remote cache server that forwards requests to a Bazel-compatible remote cache server
 and execute the provided command.
 
 Examples:
@@ -167,6 +296,7 @@ func newServer(c *cli.Context, cl client.Interface) (*server.Server, error) {
 	}
 	return srv, nil
 }
+*/
 
 func serverCheckURL(addr string) string {
 	if strings.HasPrefix(addr, ":") {
