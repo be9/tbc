@@ -178,10 +178,10 @@ func (cmd *Cmd) commandEnvironment() []string {
 		env = append(env, fmt.Sprintf("TURBO_API=%s", serverBaseURL(cmd.opts.BindAddr)))
 	}
 	if _, ok = os.LookupEnv("TURBO_TOKEN"); !ok {
-		env = append(env, fmt.Sprintf("TURBO_TOKEN=ignore"))
+		env = append(env, "TURBO_TOKEN=ignore")
 	}
 	if _, ok = os.LookupEnv("TURBO_TEAM"); !ok {
-		env = append(env, fmt.Sprintf("TURBO_TEAM=ignore"))
+		env = append(env, "TURBO_TEAM=ignore")
 	}
 	return env
 }
