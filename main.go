@@ -10,10 +10,24 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+const (
+	TLSClientCertFlag = "tls_client_certificate"
+	TLSClientKeyFlag  = "tls_client_key"
+	AddrFlag          = "addr"
+	HostFlag          = "host"
+	VerboseFlag       = "verbose"
+	SummaryFlag       = "summary"
+	TimeoutFlag       = "timeout"
+
+	defaultCacheTimeout = 30 * time.Second
+)
+
 func main() {
 	var (
 		opts              cmd.Options
 		certFile, keyFile string
+
+		logger = slog.Default()
 	)
 	app := &cli.App{
 		Name:  "tbc",
@@ -49,12 +63,12 @@ func main() {
 			return nil
 		},
 		Action: func(c *cli.Context) error {
-			exitCode, stats, err := cmd.Main(opts)
+			exitCode, stats, err := cmd.Main(logger, opts)
 			if err != nil {
 				return cli.Exit(err, exitCode)
 			}
 			if c.Bool(SummaryFlag) {
-				slog.Info("server stats", stats.SlogArgs()...)
+				logger.Info("server stats", stats.SlogArgs()...)
 			}
 			os.Exit(exitCode)
 			return nil
@@ -84,15 +98,3 @@ env TURBO_REMOTE_CACHE_SIGNATURE_KEY=super_secret \
 		slog.Error(err.Error())
 	}
 }
-
-const (
-	TLSClientCertFlag = "tls_client_certificate"
-	TLSClientKeyFlag  = "tls_client_key"
-	AddrFlag          = "addr"
-	HostFlag          = "host"
-	VerboseFlag       = "verbose"
-	SummaryFlag       = "summary"
-	TimeoutFlag       = "timeout"
-
-	defaultCacheTimeout = 30 * time.Second
-)

@@ -31,11 +31,11 @@ type Server struct {
 	stats Stats
 }
 
-func NewServer(client client.Interface, opts Options) *Server {
+func NewServer(logger *slog.Logger, client client.Interface, opts Options) *Server {
 	return &Server{
 		opts:   opts,
 		cl:     client,
-		logger: slog.With(),
+		logger: logger,
 	}
 }
 
