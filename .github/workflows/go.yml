@@ -110,4 +110,4 @@ jobs:
         run: cd end2end/monorepo && $GITHUB_WORKSPACE/tbc pnpm build 2>&1  | tee $GITHUB_WORKSPACE/second_build.log
 
       - name: Check that cache worked correctly for the second time
-        run: grep "FULL TURBO" first_build.log && grep "server stats cache_requests=0" second_build.log
+        run: grep "FULL TURBO" second_build.log && grep "server stats cache_requests=0" second_build.log
