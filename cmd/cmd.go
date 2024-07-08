@@ -14,10 +14,9 @@ import (
 	"github.com/Southclaws/fault"
 	"github.com/Southclaws/fault/fmsg"
 	"github.com/Southclaws/fault/ftag"
-	"github.com/hashicorp/go-retryablehttp"
-
 	"github.com/be9/tbc/client"
 	"github.com/be9/tbc/server"
+	"github.com/hashicorp/go-retryablehttp"
 )
 
 type Options struct {

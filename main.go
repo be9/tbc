@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/be9/tbc/cmd"
-
 	"github.com/urfave/cli/v2"
 )
 
