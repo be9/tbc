@@ -25,12 +25,19 @@ type Options struct {
 	// Command's arguments.
 	Args []string
 
+	// The remote cache host
 	RemoteCacheHost string
 	// Timeout used for remote cache operations
 	RemoteCacheTimeout time.Duration
-	RemoteCacheTLS     *TLSCerts // nil means insecure connection
 
+	// Certs for TLS (nil means insecure)
+	RemoteCacheTLS *TLSCerts
+
+	// The address to bind to
 	BindAddr string
+
+	// If true, the command will set TURBO_API, TURBO_TOKEN, and TURBO_TEAM variables (unless they are already set)
+	AutoEnv bool
 }
 
 type TLSCerts struct {
@@ -70,6 +77,7 @@ func Main(
 	c := exec.Command(cmd.opts.Command, cmd.opts.Args...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
+	c.Env = cmd.commandEnvironment()
 
 	if err = c.Start(); err != nil {
 		return 1, server.Stats{}, fault.Wrap(err, fmsg.With("error starting command"))
@@ -148,8 +156,32 @@ func (cmd *Cmd) startServer() error {
 }
 
 func serverCheckURL(addr string) string {
+	return serverBaseURL(addr) + "/v8/artifacts/status"
+}
+
+func serverBaseURL(addr string) string {
 	if strings.HasPrefix(addr, ":") {
 		addr = "localhost" + addr
 	}
-	return fmt.Sprintf("http://%s/v8/artifacts/status", addr)
+	return fmt.Sprintf("http://%s", addr)
+}
+
+func (cmd *Cmd) commandEnvironment() []string {
+	if !cmd.opts.AutoEnv {
+		return nil
+	}
+	var (
+		env = os.Environ()
+		ok  bool
+	)
+	if _, ok = os.LookupEnv("TURBO_API"); !ok {
+		env = append(env, fmt.Sprintf("TURBO_API=%s", serverBaseURL(cmd.opts.BindAddr)))
+	}
+	if _, ok = os.LookupEnv("TURBO_TOKEN"); !ok {
+		env = append(env, fmt.Sprintf("TURBO_TOKEN=ignore"))
+	}
+	if _, ok = os.LookupEnv("TURBO_TEAM"); !ok {
+		env = append(env, fmt.Sprintf("TURBO_TEAM=ignore"))
+	}
+	return env
 }
