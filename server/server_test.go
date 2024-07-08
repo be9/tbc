@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestBadToken(t *testing.T) {
-	s := NewServer(client.NewInMemoryClient(), Options{Token: "t0k3n"})
+	s := NewServer(slog.Default(), client.NewInMemoryClient(), Options{Token: "t0k3n"})
 	r := s.CreateHandler()
 
 	req, err := http.NewRequest("POST", "/v8/artifacts/events", nil)
@@ -267,7 +268,7 @@ func createHandler(token string) (http.Handler, *Server) {
 }
 
 func createHandlerForClient(token string, cl client.Interface) (http.Handler, *Server) {
-	s := NewServer(cl, Options{Token: token})
+	s := NewServer(slog.Default(), cl, Options{Token: token})
 	r := s.CreateHandler()
 	return r, s
 }

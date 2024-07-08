@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      bazel-remote:
+        image: buchgr/bazel-remote-cache:v1.3.4
+        ports:
+          - 9092:9092
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    - name: Build CLI
+      run: mkdir -p bin && go build -o bin/tbc .
+
+    - name: Upload CLI
+      uses: actions/upload-artifact@v4
+      with:
+        name: tbc
+        path: bin/tbc
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: v1.59.1
+
+    - name: Run tests
+      run: go test ./...
+
+    - name: Run integration tests
+      run: go test ./client -remote-cache-host localhost:9092
+
+  ############################################################################
+
+  end2end:
+    runs-on: ubuntu-latest
+    needs: build
+
+    services:
+      bazel-remote:
+        image: buchgr/bazel-remote-cache:v1.3.4
+        ports:
+          - 9092:9092
+
+    env:
+      # This is required by turbo with "remoteCache": { "signature": true }
+      # tbc --auto-env does not set this variable.
+      TURBO_REMOTE_CACHE_SIGNATURE_KEY: super_secret
+      TURBO_TELEMETRY_DISABLED: 1
+      TBC_SUMMARY: true
+      TBC_HOST: localhost:9092
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github
+            end2end
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+          package_json_file: end2end/monorepo/package.json
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: end2end/.tool-versions
+          cache: 'pnpm'
+          cache-dependency-path: end2end/monorepo/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm -C end2end/monorepo install
+
+      - name: Grab tbc
+        uses: actions/download-artifact@v4
+        with:
+          name: tbc
+
+      - name: Restore exec bit for tbc
+        run: chmod +x $GITHUB_WORKSPACE/tbc
+
+      - name: Build monorepo for the first time
+        run: >
+          cd end2end/monorepo && 
+          $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/first_build.log
+
+      - name: Check that cache worked correctly
+        run: grep -q "server stats uploads=2 downloads_not_found=2" first_build.log
+
+      - name: Wipe local cache
+        run: pnpm -C end2end/monorepo wipe
+
+      - name: Build monorepo for the second time to check that artifacts were taken from the remote cache
+        run: >
+          cd end2end/monorepo && 
+          $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/second_build.log
+
+      - name: Check that cache worked correctly for the second time
+        run: >
+          grep -q "FULL TURBO" second_build.log &&
+          grep -q "server stats downloads=2" second_build.log
+
+      - name: Check the --ignore-failures mode (invalid cache host)
+        env:
+          TBC_HOST: example.org:9093    # invalid
+          TBC_IGNORE_FAILURES: true
+        run: >
+          cd end2end/monorepo &&
+          $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/third_build.log
+
+      - name: Check the log
+        run: >
+          grep -q "FULL TURBO" third_build.log && 
+          grep -q "cache proxy failed, just running the command" third_build.log
