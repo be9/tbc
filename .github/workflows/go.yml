@@ -97,5 +97,8 @@ jobs:
         with:
           name: tbc
 
+      - name: Restore exec bit for tbc
+        run: chmod +x $GITHUB_WORKSPACE/tbc
+
       - name: Build monorepo for the first time
         run: cd end2end/monorepo && $GITHUB_WORKSPACE/tbc pnpm build
