@@ -101,10 +101,10 @@ jobs:
         run: chmod +x $GITHUB_WORKSPACE/tbc
 
       - name: Build monorepo for the first time
-        run: cd end2end/monorepo && $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee first_build.log
+        run: cd end2end/monorepo && $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/first_build.log
 
       - name: Check that cache worked correctly
         run: grep "server stats uploads=2 downloads_not_found=2" first_build.log
 
       - name: Build monorepo for the second time to check that artifacts are cached
-        run: cd end2end/monorepo && $GITHUB_WORKSPACE/tbc pnpm build 2>&1  | tee second_build.log
+        run: cd end2end/monorepo && $GITHUB_WORKSPACE/tbc pnpm build 2>&1  | tee $GITHUB_WORKSPACE/second_build.log
