@@ -13,7 +13,6 @@ import (
 
 	"github.com/Southclaws/fault"
 	"github.com/Southclaws/fault/fmsg"
-	"github.com/Southclaws/fault/ftag"
 	"github.com/be9/tbc/client"
 	"github.com/be9/tbc/server"
 	"github.com/hashicorp/go-retryablehttp"
@@ -35,9 +34,10 @@ type Options struct {
 
 	// The address to bind to
 	BindAddr string
-
 	// If true, the command will set TURBO_API, TURBO_TOKEN, and TURBO_TEAM variables (unless they are already set)
 	AutoEnv bool
+	// If remote cache connection or proxy server start fails, just run the command.
+	IgnoreFailures bool
 }
 
 type TLSCerts struct {
@@ -51,47 +51,59 @@ type Cmd struct {
 	srv    *server.Server
 }
 
-const (
-	ClientFailure ftag.Kind = "REMOTE_CACHE_CLIENT_FAILURE"
-	ServerFailure ftag.Kind = "PROXY_SERVER_FAILURE"
-)
-
 // Main is the CLI entry.
 func Main(
 	logger *slog.Logger,
 	opts Options,
-) (exitCode int, serverStats server.Stats, err error) {
+) (exitCode int, serverStats server.Stats, errorsIgnored bool, err error) {
 	cmd := &Cmd{opts: opts, logger: logger}
-	if err = cmd.instantiateClient(); err != nil {
-		return 1, server.Stats{}, fault.Wrap(err,
-			fmsg.With("failed to create remote cache client"),
-			ftag.With(ClientFailure))
-	}
-	if err = cmd.startServer(); err != nil {
-		return 1, server.Stats{}, fault.Wrap(err,
-			fmsg.With("failed to start proxy server"),
-			ftag.With(ServerFailure))
+
+	clientServerErr := func() error {
+		var err error
+		if err = cmd.instantiateClient(); err != nil {
+			return fault.Wrap(err, fmsg.With("failed to create remote cache client"))
+		}
+		if err = cmd.startServer(); err != nil {
+			return fault.Wrap(err, fmsg.With("failed to start proxy server"))
+		}
+		return nil
+	}()
+
+	if clientServerErr != nil {
+		if cmd.opts.IgnoreFailures {
+			logger.Error("cache proxy failed, just running the command",
+				slog.String("err", clientServerErr.Error()))
+
+			errorsIgnored = true
+		} else {
+			return 1, serverStats, false, clientServerErr
+		}
 	}
 
 	// Start the command in the background
 	c := exec.Command(cmd.opts.Command, cmd.opts.Args...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
-	c.Env = cmd.commandEnvironment()
+
+	if !errorsIgnored {
+		c.Env = cmd.commandEnvironment()
+	}
 
 	if err = c.Start(); err != nil {
-		return 1, server.Stats{}, fault.Wrap(err, fmsg.With("error starting command"))
+		return 1, server.Stats{}, false, fault.Wrap(err, fmsg.With("error starting command"))
 	}
 
 	if err = c.Wait(); err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
 			exitCode = exitError.ExitCode()
 		} else {
-			return 1, server.Stats{}, fault.Wrap(err, fmsg.With("error running command"))
+			return 1, server.Stats{}, false, fault.Wrap(err, fmsg.With("error running command"))
 		}
 	}
-
-	return exitCode, cmd.srv.GetStatistics(), nil
+	if !errorsIgnored {
+		serverStats = cmd.srv.GetStatistics()
+	}
+	return
 }
 
 // instantiateClient creates the client connection and runs CheckCapabilities

@@ -71,6 +71,12 @@ func main() {
 				Value:       true,
 				Destination: &opts.AutoEnv,
 			},
+			&cli.BoolFlag{
+				Name:        "ignore-failures",
+				EnvVars:     []string{"TBC_IGNORE_ERRORS"},
+				Usage:       "Just run turbo without the proxy if proxy fails",
+				Destination: &opts.IgnoreFailures,
+			},
 
 			&cli.BoolFlag{
 				Name:    VerboseFlag,
@@ -110,11 +116,11 @@ func main() {
 			return nil
 		},
 		Action: func(c *cli.Context) error {
-			exitCode, stats, err := cmd.Main(logger, opts)
+			exitCode, stats, errorsIgnored, err := cmd.Main(logger, opts)
 			if err != nil {
 				return cli.Exit(err, exitCode)
 			}
-			if c.Bool(SummaryFlag) {
+			if !errorsIgnored && c.Bool(SummaryFlag) {
 				logger.Info("server stats", stats.SlogArgs()...)
 			}
 			os.Exit(exitCode)
@@ -130,13 +136,19 @@ Examples:
 # Check the server with curl (by default, the server binds to 0.0.0.0:8080)
 tbc --host bazel-cache-host:port curl http://localhost:8080/v8/artifacts/status
 
-# Run 'turbo build'
+# Run 'turbo build' with auto-set variables; if cache doesn't work, run the command ignoring the cache:
+env TURBO_REMOTE_CACHE_SIGNATURE_KEY=super_secret \
+    tbc --host bazel-cache-host:port --auto-env --ignore-failures --summary \
+    pnpm turbo build
+
+# Run 'turbo build' with manually set vars:
 env TURBO_REMOTE_CACHE_SIGNATURE_KEY=super_secret \
     TURBO_API=http://localhost:8080 \
     TURBO_TOKEN=any \		# this is not actually used, but required to be set by turbo
     TURBO_TEAM=any \
     tbc --host bazel-cache-host:port \
     --summary \
+	--auto-env=false \
     pnpm turbo build
 `,
 	}
