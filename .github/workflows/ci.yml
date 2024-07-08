@@ -100,25 +100,35 @@ jobs:
         run: chmod +x $GITHUB_WORKSPACE/tbc
 
       - name: Build monorepo for the first time
-        run: cd end2end/monorepo && $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/first_build.log
+        run: |
+          cd end2end/monorepo 
+          $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/first_build.log
 
       - name: Check that cache worked correctly
-        run: grep "server stats uploads=2 downloads_not_found=2" first_build.log
+        run: grep -q "server stats uploads=2 downloads_not_found=2" first_build.log
 
       - name: Wipe local cache
         run: pnpm -C end2end/monorepo wipe
 
       - name: Build monorepo for the second time to check that artifacts were taken from the remote cache
-        run: cd end2end/monorepo && $GITHUB_WORKSPACE/tbc pnpm build 2>&1  | tee $GITHUB_WORKSPACE/second_build.log
+        run: |
+          cd end2end/monorepo 
+          $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/second_build.log
 
       - name: Check that cache worked correctly for the second time
-        run: grep "FULL TURBO" second_build.log && grep "server stats downloads=2" second_build.log
+        run: |
+          grep -q "FULL TURBO" second_build.log &&
+          grep -q "server stats downloads=2" second_build.log
 
       - name: Check the --ignore-failures mode (invalid cache host)
         env:
           TBC_HOST: example.org:9093    # invalid
           TBC_IGNORE_FAILURES: true
-        run: cd end2end/monorepo && $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/third_build.log
+        run: |
+          cd end2end/monorepo
+          $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/third_build.log
 
       - name: Check the log
-        run: grep "FULL TURBO" third_build.log && grep "cache proxy failed, just running the command" third_build.log
+        run: |
+          grep -q "FULL TURBO" third_build.log && 
+          grep -q "cache proxy failed, just running the command" third_build.log
