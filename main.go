@@ -73,7 +73,7 @@ func main() {
 			},
 			&cli.BoolFlag{
 				Name:        "ignore-failures",
-				EnvVars:     []string{"TBC_IGNORE_ERRORS"},
+				EnvVars:     []string{"TBC_IGNORE_FAILURES"},
 				Usage:       "Just run turbo without the proxy if proxy fails",
 				Destination: &opts.IgnoreFailures,
 			},
