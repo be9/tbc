@@ -79,6 +79,9 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: end2end/monorepo/pnpm-lock.yaml
 
+      - name: Install dependencies
+        run: pnpm install
+
       - name: Grab tbc CLI
         uses: actions/download-artifact@v4
         with:
