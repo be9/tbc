@@ -25,7 +25,23 @@ func TestClientIntegration(t *testing.T) {
 		t.Skip("remote-cache-host is not set, skipping the integration test")
 	}
 
-	cc, err := DialGrpc(*remoteCacheHost, *tlsCert, *tlsKey)
+	if (*tlsCert != "") != (*tlsKey != "") {
+		t.Fatal("--remote-tls-cert and --remote-tls-key must be provided together")
+	}
+
+	var (
+		certPEM, keyPEM []byte
+		err             error
+	)
+	if *tlsCert != "" {
+		certPEM, err = os.ReadFile(*tlsCert)
+		assert.NilError(t, err)
+
+		keyPEM, err = os.ReadFile(*tlsKey)
+		assert.NilError(t, err)
+	}
+
+	cc, err := NewClientConn(*remoteCacheHost, certPEM, keyPEM)
 	assert.NilError(t, err)
 
 	t.Cleanup(func() { _ = cc.Close() })

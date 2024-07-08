@@ -2,8 +2,8 @@ package client
 
 import (
 	"crypto/tls"
-	"fmt"
 
+	"github.com/Southclaws/fault"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -15,15 +15,15 @@ const (
 	windowSize = 8 * 1024 * 1024
 )
 
-// DialGrpc creates a new gRPC client connected to host. tlsKey and tlsCert must be either both empty or non-empty.
-func DialGrpc(host, tlsCert, tlsKey string) (*grpc.ClientConn, error) {
+// NewClientConn creates a new gRPC client connected to host. tlsKey and tlsCert must be either both empty or non-empty.
+func NewClientConn(host string, certPEMBlock, keyPEMBlock []byte) (*grpc.ClientConn, error) {
 	var creds credentials.TransportCredentials
 
-	if tlsCert != "" || tlsKey != "" {
-		if tlsCert == "" || tlsKey == "" {
-			return nil, fmt.Errorf("only one of tlsCert and tlsKey was provided")
+	if len(certPEMBlock) > 0 || len(keyPEMBlock) > 0 {
+		if len(certPEMBlock) == 0 || len(keyPEMBlock) == 0 {
+			return nil, fault.New("only one of certPEMBlock and keyPEMBlock was provided")
 		}
-		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+		cert, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
 		if err != nil {
 			return nil, err
 		}
