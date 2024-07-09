@@ -40,7 +40,7 @@ func main() {
 				Name:        "addr",
 				EnvVars:     []string{"TBC_ADDR"},
 				Usage:       "Address to bind to",
-				Value:       ":8080",
+				Value:       "127.0.0.1:8080",
 				Destination: &opts.BindAddr,
 			},
 			&cli.StringFlag{
@@ -133,7 +133,7 @@ and execute the provided command.
 
 Examples:
 
-# Check the server with curl (by default, the server binds to 0.0.0.0:8080)
+# Check the server with curl (by default, the server binds to 127.0.0.1:8080)
 tbc --host bazel-cache-host:port curl http://localhost:8080/v8/artifacts/status
 
 # Run 'turbo build' with auto-set variables; if cache doesn't work, run the command ignoring the cache:
