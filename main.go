@@ -126,7 +126,7 @@ func main() {
 			if err != nil {
 				return cli.Exit(err, exitCode)
 			}
-			if !errorsIgnored && c.Bool(SummaryFlag) {
+			if c.Bool(SummaryFlag) && !opts.Disabled && !errorsIgnored {
 				logger.Info("server stats", stats.SlogArgs()...)
 			}
 			os.Exit(exitCode)
