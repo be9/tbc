@@ -35,7 +35,7 @@ func NewClientConn(host string, certPEMBlock, keyPEMBlock []byte) (*grpc.ClientC
 	}
 
 	// TODO retries https://github.com/grpc/grpc-go/blob/master/examples/features/retry/README.md
-	return grpc.NewClient(host,
+	return grpc.Dial(host,
 		grpc.WithTransportCredentials(creds),
 		grpc.WithInitialWindowSize(windowSize),
 		grpc.WithInitialConnWindowSize(windowSize),
