@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 )
 
+// Options carries CLI options, see Main.
 type Options struct {
 	// The command to run.
 	Command string
@@ -36,6 +37,8 @@ type Options struct {
 	BindAddr string
 	// If true, the command will set TURBO_API, TURBO_TOKEN, and TURBO_TEAM variables (unless they are already set)
 	AutoEnv bool
+	// If true, just run the command.
+	Disabled bool
 	// If remote cache connection or proxy server start fails, just run the command.
 	IgnoreFailures bool
 }
@@ -56,43 +59,47 @@ func Main(
 	logger *slog.Logger,
 	opts Options,
 ) (exitCode int, serverStats server.Stats, errorsIgnored bool, err error) {
-	cmd := &Cmd{opts: opts, logger: logger}
+	var (
+		cmd = &Cmd{opts: opts, logger: logger}
 
-	clientServerErr := func() error {
-		var err error
-		if err = cmd.instantiateClient(); err != nil {
-			return fault.Wrap(err, fmsg.With("failed to create remote cache client"))
+		startClientAndServer = func() error {
+			var err error
+			if err = cmd.instantiateClient(); err != nil {
+				return fault.Wrap(err, fmsg.With("failed to create remote cache client"))
+			}
+			if err = cmd.startServer(); err != nil {
+				return fault.Wrap(err, fmsg.With("failed to start proxy server"))
+			}
+			return nil
 		}
-		if err = cmd.startServer(); err != nil {
-			return fault.Wrap(err, fmsg.With("failed to start proxy server"))
-		}
-		return nil
-	}()
+	)
+	if !cmd.opts.Disabled {
+		clientServerErr := startClientAndServer()
+		if clientServerErr != nil {
+			if cmd.opts.IgnoreFailures {
+				logger.Error("cache proxy failed, just running the command",
+					slog.String("err", clientServerErr.Error()))
 
-	if clientServerErr != nil {
-		if cmd.opts.IgnoreFailures {
-			logger.Error("cache proxy failed, just running the command",
-				slog.String("err", clientServerErr.Error()))
-
-			errorsIgnored = true
-		} else {
-			return 1, serverStats, false, clientServerErr
+				errorsIgnored = true
+			} else {
+				return 1, serverStats, false, clientServerErr
+			}
 		}
 	}
+
+	serverActuallyRuns := !errorsIgnored && !cmd.opts.Disabled
 
 	// Start the command in the background
 	c := exec.Command(cmd.opts.Command, cmd.opts.Args...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 
-	if !errorsIgnored {
-		c.Env = cmd.commandEnvironment()
+	if serverActuallyRuns && cmd.opts.AutoEnv {
+		c.Env = cmd.turboEnvironment()
 	}
-
 	if err = c.Start(); err != nil {
 		return 1, server.Stats{}, false, fault.Wrap(err, fmsg.With("error starting command"))
 	}
-
 	if err = c.Wait(); err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
 			exitCode = exitError.ExitCode()
@@ -100,7 +107,7 @@ func Main(
 			return 1, server.Stats{}, false, fault.Wrap(err, fmsg.With("error running command"))
 		}
 	}
-	if !errorsIgnored {
+	if serverActuallyRuns {
 		serverStats = cmd.srv.GetStatistics()
 	}
 	return
@@ -178,10 +185,7 @@ func serverBaseURL(addr string) string {
 	return fmt.Sprintf("http://%s", addr)
 }
 
-func (cmd *Cmd) commandEnvironment() []string {
-	if !cmd.opts.AutoEnv {
-		return nil
-	}
+func (cmd *Cmd) turboEnvironment() []string {
 	var (
 		env = os.Environ()
 		ok  bool

@@ -77,6 +77,12 @@ func main() {
 				Usage:       "Just run turbo without the proxy if proxy fails",
 				Destination: &opts.IgnoreFailures,
 			},
+			&cli.BoolFlag{
+				Name:        "disable",
+				EnvVars:     []string{"TBC_DISABLE"},
+				Usage:       "Run turbo without the proxy",
+				Destination: &opts.Disabled,
+			},
 
 			&cli.BoolFlag{
 				Name:    VerboseFlag,

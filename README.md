@@ -70,7 +70,7 @@ downloaded from the remote cache; the build was skipped.
 artifacts were found in the [local task cache](https://turbo.build/repo/docs/crafting-your-repository/caching);
 the remote cache wasn't used.
 
-### Cache Invalidation
+### Cache Invalidation and Disabling
 
 `tbc` uses `teamId` that originates from `--team` value passed to Turborepo
 (or `TURBO_TEAM` variable) to scope cache keys. That is, changing the "team" value would
@@ -84,6 +84,8 @@ the variable if it's already set:
 export TURBO_TEAM=cache-version-1
 tbc --host bazel.proxy.host:1234 turbo run build
 ```
+
+Adding `--disable` would make `tbc` just run the passed command without starting the proxy server.
 
 ### Robust Builds with `--ignore-failures`
 
