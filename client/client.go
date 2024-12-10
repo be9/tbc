@@ -11,7 +11,7 @@ import (
 	"github.com/Southclaws/fault"
 	"github.com/Southclaws/fault/fctx"
 	"github.com/Southclaws/fault/fmsg"
-	"github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
+	remoteexecution "github.com/bazelbuild/remote-apis/build/bazel/remote/execution/v2"
 	"github.com/google/uuid"
 	"google.golang.org/api/transport/bytestream"
 	"google.golang.org/grpc"

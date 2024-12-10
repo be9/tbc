@@ -37,6 +37,9 @@ type Options struct {
 	BindAddr string
 	// If true, the command will set TURBO_API, TURBO_TOKEN, and TURBO_TEAM variables (unless they are already set)
 	AutoEnv bool
+	// Additional environment overrides.
+	Env []string
+
 	// If true, just run the command.
 	Disabled bool
 	// If remote cache connection or proxy server start fails, just run the command.
@@ -94,8 +97,13 @@ func Main(
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 
-	if serverActuallyRuns && cmd.opts.AutoEnv {
-		c.Env = cmd.turboEnvironment()
+	if serverActuallyRuns {
+		if cmd.opts.AutoEnv {
+			c.Env = cmd.turboEnvironment()
+		}
+		if len(cmd.opts.Env) > 0 {
+			c.Env = append(c.Env, cmd.opts.Env...)
+		}
 	}
 	if err = c.Start(); err != nil {
 		return 1, server.Stats{}, false, fault.Wrap(err, fmsg.With("error starting command"))
