@@ -1,3 +1,4 @@
+version: "2"
 linters:
   enable:
     - bodyclose
@@ -5,10 +6,24 @@ linters:
     - contextcheck
     - decorder
     - exhaustive
-    - gci
     - goconst
-
-# https://github.com/golangci/golangci-lint/issues/4743
-linters-settings:
-  errcheck:
-    ignore: ''
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gci
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

@@ -38,9 +38,9 @@ jobs:
         path: bin/tbc
 
     - name: golangci-lint
-      uses: golangci/golangci-lint-action@v6
+      uses: golangci/golangci-lint-action@v9.2.0
       with:
-        version: v1.59.1
+        version: v2.11.4
 
     - name: Run tests
       run: go test ./...
@@ -102,7 +102,7 @@ jobs:
 
       - name: Build monorepo for the first time
         run: >
-          cd end2end/monorepo && 
+          cd end2end/monorepo &&
           $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/first_build.log
 
       - name: Check that cache worked correctly
@@ -113,7 +113,7 @@ jobs:
 
       - name: Build monorepo for the second time to check that artifacts were taken from the remote cache
         run: >
-          cd end2end/monorepo && 
+          cd end2end/monorepo &&
           $GITHUB_WORKSPACE/tbc pnpm build 2>&1 | tee $GITHUB_WORKSPACE/second_build.log
 
       - name: Check that cache worked correctly for the second time
@@ -131,5 +131,5 @@ jobs:
 
       - name: Check the log
         run: >
-          grep -q "FULL TURBO" third_build.log && 
+          grep -q "FULL TURBO" third_build.log &&
           grep -q "cache proxy failed, just running the command" third_build.log
